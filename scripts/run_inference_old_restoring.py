@@ -17,9 +17,9 @@ from rasterio.plot import show
 from rasterio.windows import Window
 from rasterio.warp import calculate_default_transform, reproject, Resampling
 from scripts.train_modules.train_classes import UnetModel
-from scripts.process_modules.process_tiffs_module import  create_event_datacube_TSX_inf,reproject_to_4326_gdal, make_float32_inf, resample_tiff_gdal
-from scripts.process_modules.process_dataarrays_module import tile_datacube_rxr_inf
-from scripts.process_modules.process_helpers import  print_tiff_info_TSX, check_single_input_filetype, rasterize_kml_rasterio, compute_image_minmax, process_raster_minmax, path_not_exists, read_minmax_from_json, normalize_imagedata_inf, read_raster, write_raster
+from scripts.process.process_tiffs_module import  create_event_datacube_TSX_inf,reproject_to_4326_gdal, make_float32_inf, resample_tiff_gdal
+from scripts.process.process_dataarrays import tile_datacube_rxr_inf
+from scripts.process.process_helpers import  print_tiff_info_TSX, check_single_input_filetype, rasterize_kml_rasterio, compute_image_minmax, process_raster_minmax, path_not_exists, read_minmax_from_json, normalize_imagedata_inf, read_raster, write_raster
 from collections import OrderedDict
 from skimage.morphology import binary_erosion
 

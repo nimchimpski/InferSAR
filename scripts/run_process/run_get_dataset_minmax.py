@@ -1,4 +1,4 @@
-from scripts.process_modules.process_dataarrays_module import calculate_global_min_max_nc
+from scripts.process.process_dataarrays import calculate_global_min_max_nc
 from pathlib import Path
 
 def main():

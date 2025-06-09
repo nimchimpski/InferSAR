@@ -4,6 +4,7 @@ import rioxarray as rxr # very important!
 import numpy as np
 import xarray as xr
 from rasterio.enums import ColorInterp
+from rasterio.windows import Window
 from tqdm import tqdm
 from pathlib import Path
 import netCDF4 as nc
@@ -18,7 +19,7 @@ import rasterio
 import numpy as np
 from rasterio.io import MemoryFile
 from rasterio.warp import calculate_default_transform, reproject, Resampling
-from scripts.process_modules.process_helpers import  nan_check, print_dataarray_info
+from scripts.process.process_helpers import  nan_check, print_dataarray_info
 
 
 
@@ -131,10 +132,10 @@ def create_extent_from_mask(mask_path, output_raster, no_data_value=None):
         if no_data_value is None:
             no_data_value = src.nodata
         if no_data_value is None:
-            raise ValueError("No no-data value found in metadata or provided.")
+            print("No no-data value found in metadata or provided.")
+            return
             # create a binary mask with the entire image as 1
             
-
         # Create a binary mask (1 for valid data, 0 for no-data)
         binary_mask = (mask != no_data_value).astype(np.uint8)
 
@@ -155,6 +156,54 @@ def create_extent_from_mask(mask_path, output_raster, no_data_value=None):
     print(f"extent saved to {output_raster}")
 
 
+def create_valid_mask(img_path, mask_path, mask_code, dest_folder, inference=False):  
+    """
+    Creates a valid mask from img and mask files.
+    The valid mask is saved as 'valid_mask.tif'.
+    The original mask is rewritten with IGNORE_VAL where invalid.
+    """
+    print('+++in create_valid_mask fn')
+    
+    # Constants
+    PAD_VAL      = 0          # or 1
+    ATOL         = 1e-5
+    IGNORE_VAL   = 255
+
+    # --- read the bands ---
+    with rasterio.open(img_path) as img_src, \
+         rasterio.open(mask_path) as msk_src:
+
+        img   = img_src.read(1)
+        mask = msk_src.read(1)
+        prof = img_src.profile        # same for all bands after reprojection
+        print(f'---img shape= {img.shape}')
+        print(f'---mask shape= {mask.shape}')
+        print(f'---img dtype= {img.dtype}')
+    # --- build valid mask ---
+    valid = ~(np.isclose(img, PAD_VAL, atol=ATOL) &
+              np.isclose(mask, PAD_VAL, atol=ATOL))
+
+    # --- save valid mask (Byte, 0/1) ---
+    vmask_prof = prof.copy()
+    vmask_prof.update(count=1, dtype=rasterio.uint8, nodata=0)
+    with rasterio.open(dest_folder / "valid_mask.tif", "w", **vmask_prof) as dst:
+        dst.write(valid.astype(np.uint8), 1)
+
+    # --- rewrite mask with IGNORE ---
+    mask_clean = np.where(valid, mask, IGNORE_VAL)
+    mask_prof  = prof.copy()
+    mask_prof.update(dtype=rasterio.uint8, nodata=IGNORE_VAL)
+    with rasterio.open(dest_folder / "mask_no_padding.tif", "w", **mask_prof) as dst:
+        dst.write(mask_clean.astype(np.uint8), 1)
+
+        # --- optional crop to valid bbox ---
+    rows, cols = np.where(valid)
+    row0, row1 = rows.min(), rows.max()+1
+    col0, col1 = cols.min(), cols.max()+1
+    window = ((row0, row1), (col0, col1))
+
+    cropped_image = dest_folder / f'{mask_code}_cropped_image.tif'
+    
 # NORMALIZING
 def compute_image_min_max(image, band_to_read=1):
     with rasterio.open(image) as src:
@@ -165,7 +214,6 @@ def compute_image_min_max(image, band_to_read=1):
         max = int(data.max())
         print(f"---{image.name}: Min: {data.min()}, Max: {data.max()}")
     return min, max
-
 
 def calculate_and_normalize_slope(input_dem, mask_code):
     """
@@ -213,8 +261,6 @@ def calculate_and_normalize_slope(input_dem, mask_code):
     print(f"Normalized slope raster saved to: {normalized_slope}")
     return normalized_slope
 
-
-
 # CHANGE DATA TYPE
 def make_float32_inf(input_tif, output_file):
     '''
@@ -239,7 +285,6 @@ def make_float32_inf(input_tif, output_file):
         with rasterio.open(output_file, 'w', **meta) as dst:
             dst.write(data.astype('float32'))
             return output_file
-
 
 def make_float32(input_tif, file_name):
     '''
@@ -269,7 +314,6 @@ def make_float32(input_tif, file_name):
             with rasterio.open(file_name, 'w', **meta) as dst:
                 dst.write(data.astype('float32'))        
         return file_name
-
 
 def make_float32_inmem(input_tif):
 
@@ -714,7 +758,6 @@ def make_datas(event):
     
     print("\n+++ Datacube Health Check Completed +++")
 
-
 def make_das_from_layerdict( layerdict, folder):
     dataarrays = []
     layer_names = []
@@ -765,7 +808,6 @@ def nan_check(nparray):
         print("----NO NANS FOUND")
         return True
 
-
 def create_event_datacube_TSX(event, mask_code, VERSION="v1"):
     '''
     An xarray dataset is created for the event folder and saved as a .nc file.
@@ -802,7 +844,6 @@ def create_event_datacube_TSX(event, mask_code, VERSION="v1"):
     da.to_netcdf(output_path, mode='w', format='NETCDF4', engine='netcdf4')
     
     print(f'>>>>>>>>>>>  ds saved for= {event.name} bye bye >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n')
-
 
 def create_event_datacube_TSX_inf(event, mask_code, VERSION="v1"):
     '''
@@ -841,7 +882,6 @@ def create_event_datacube_TSX_inf(event, mask_code, VERSION="v1"):
     da.to_netcdf(output_path, mode='w', format='NETCDF4', engine='netcdf4')
     
     print(f'##################  ds saved for= {event.name} bye bye #################\n')
-
 
 # WORK ON DEM
 def match_dem_to_mask(sar_image, dem, output_path):
@@ -887,7 +927,6 @@ def match_dem_to_mask(sar_image, dem, output_path):
                 )
 
     print(f"Reprojected and aligned DEM saved to: {output_path}")
-
 
 def create_slope_from_dem(target_file, dst_file):
     cmd = [
@@ -998,7 +1037,6 @@ def align_image_to_mask(sar_image, mask, aligned_image):
                 )
 
     print(f"---Aligned SAR image saved to: {aligned_image}")
-
 
 # probably not needed
 def process_terraSARx_data(data_root):

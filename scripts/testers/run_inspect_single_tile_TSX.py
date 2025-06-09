@@ -5,7 +5,7 @@ import rasterio
 import numpy as np
 from tqdm import tqdm
 import shutil  # For safely replacing files
-from scripts.process_modules.process_helpers import get_band_name, min_max_vals, num_band_vals, datatype_check, check_single_tile, print_tiff_info_TSX
+from scripts.process.process_helpers import get_band_name, min_max_vals, num_band_vals, datatype_check, check_single_tile, print_tiff_info_TSX
 
 def main():
     print('++++++++++SINGLE TILE CHECK+++++++++++++X')

@@ -8,10 +8,10 @@ import os
 import click
 from rasterio.warp import calculate_default_transform, reproject, Resampling
 
-from scripts.process_modules.process_tiffs_module import create_event_datacube_TSX, clean_mask,  reproject_to_4326_fixpx_gdal, make_float32,  create_extent_from_mask,  clip_image_to_mask_gdal
+from scripts.process.process_tiffs import create_event_datacube_TSX, clean_mask,  reproject_to_4326_fixpx_gdal, make_float32,  create_extent_from_mask,  clip_image_to_mask_gdal, create_valid_mask
 
-from scripts.process_modules.process_dataarrays_module import tile_datacube_rxr, compute_dataset_minmax
-from scripts.process_modules.process_helpers import  print_tiff_info_TSX, write_minmax_to_json, read_minmax_from_json, compute_dataset_minmax
+from scripts.process.process_dataarrays import tile_datacube_rxr, compute_dataset_minmax
+from scripts.process.process_helpers import  print_tiff_info_TSX, write_minmax_to_json, read_minmax_from_json, compute_dataset_minmax
 
 start=time.time()
 
@@ -33,13 +33,13 @@ def main(test=None):
         dataset =  repo_src / 'SAR_TO_PROCESS_INPUT' 
         # dataset=Path(r"Y:\1NEW_DATA\1data\2interim\TSX aa datacubes") 
         # dataset = Path(r'Y:\1NEW_DATA\1data\2interim\TSX aa datacubes\ok')
-    make_tifs = 1
-    make_datacubes = 1
-    get_minmax = 1
+    make_tifs = 0
+    make_datacubes = 0
+    get_minmax = 0
     make_norm_tiles = 1
     norm_func = 'logclipmm_g' # 'mm' or 'logclipmm'
     minmax_path = repo_root / 'configs' / 'global_minmax_INPUT' / 'global_minmax.json'
-    percent_non_flood = 100
+    percent_non_flood = 0
     ############################################################################
     print(f'>>>make_tifs= {make_tifs==1} \n>>>make_datacubes= {make_datacubes==1} \n>>>get minmax= {get_minmax==1} \n>>>make_tiles= {make_norm_tiles==1}')
 
@@ -70,8 +70,8 @@ def main(test=None):
                     shutil.copy(orig_mask, ex_mask)
                     print(f'>>>mask={ex_mask.name}')
 
-                    # ex_extent = extract_folder / f'{mask_code}_extent.tif'
-                    # create_extent_from_mask(ex_mask, ex_extent)
+                    ex_extent = extract_folder / f'{mask_code}_extent.tif'
+                    create_extent_from_mask(ex_mask, ex_extent)
 
                     # copy the poly
                     # poly = list(event.rglob('*POLY*.kml'))[0]
@@ -141,22 +141,27 @@ def main(test=None):
                     clipped_image = extract_folder / f'{mask_code}_clipped_image.tif'
                     clip_image_to_mask_gdal(reproj_image, cleaned_mask, clipped_image)
                     # print_tiff_info_TSX(clipped_image, cleaned_mask)
+                     # MAKE VALID MASK
+                    print('\n>>>>>>>>>>>>>>>> make valid mask >>>>>>>>>>>>>>>>>')
+                    
+                    create_valid_mask(clipped_image, cleaned_mask, mask_code, extract_folder, inference=False)
 
-
+                    mask_no_padding = extract_folder / 'mask_no_padding.tif'
+                    # get values
+                    # print_tiff_info_TSX(mask_no_padding)
+                                    
                     # MAKE FLOAT32
                     print('\n>>>>>>>>>>>>>>>> make image float32 >>>>>>>>>>>>>>>>>')
                     file_name = extract_folder / f'{mask_code}_final_image.tif'
                     final_image = make_float32(clipped_image, file_name)
                     # print_tiff_info_TSX(final_image, mask=cleaned_mask)
                     clipped_image.unlink()
-
-                    print('>>> final image= ',final_image)
-
+                    
                     print('\n>>>>>>>>>>>>>>>> make mask float32 >>>>>>>>>>>>>>>>>')
+                    mask_w_nodata = extract_folder / 'mask_no_padding.tif'
                     final_mask = extract_folder / f'{mask_code}_final_mask.tif'
-                    make_float32(cleaned_mask, final_mask)
+                    make_float32(mask_no_padding, final_mask)
                     cleaned_mask.unlink()
-
 
                     # print('\n>>>>>>>>>>>>>>>> make extent float32 >>>>>>>>>>>>>>>>>')
                     # final_extent = extract_folder / f'{mask_code}_final_extent.tif'
@@ -164,6 +169,8 @@ def main(test=None):
 
                     print_tiff_info_TSX(final_image) 
                     print_tiff_info_TSX(final_mask) 
+                    mask_w_nodata.unlink()
+                    (extract_folder / 'valid_mask.tif').unlink()
 
                 # CREATE AN EVENT DATA CUBE
                 if make_datacubes:
@@ -195,7 +202,7 @@ def main(test=None):
         total_has_nans = 0
         total_novalid_layer = 0
         total_novalid_pixels = 0
-        total_nomask_px = 0
+        total_nomask_pixels = 0
         total_skip_nomask_pixels = 0
         total_failed_norm = 0
         total_num_not_256 = 0
@@ -217,14 +224,14 @@ def main(test=None):
 
             print(f"\n################### tiling ###################")
             # DO THE TILING AND GET THE STATISTICS
-            num_tiles, num_saved, num_has_nans, num_novalid_layer, num_novalid_pixels, num_nomask_px, num_skip_nomask_pixels, num_failed_norm , num_not_256, num_px_outside_extent= tile_datacube_rxr(cube, save_tiles_path, tile_size=256, stride=256, norm_func=norm_func, stats=minmax, percent_non_flood=percent_non_flood, inference=False)
+            num_tiles, num_saved, num_has_nans, num_novalid_layer, num_novalid_pixels, num_nomask_pixels, num_skip_nomask_pixels, num_failed_norm , num_not_256, num_px_outside_extent= tile_datacube_rxr(cube, save_tiles_path, tile_size=256, stride=256, norm_func=norm_func, stats=minmax, percent_non_flood=percent_non_flood, inference=False)
 
             print('<<<  num_tiles= ', num_tiles)
             print('<<< num_saved= ', num_saved)  
             print('<<< num_has_nans= ', num_has_nans)
             print('<<< num_novalid_layer= ', num_novalid_layer)
             print('<<< num_novalid_pixels= ', num_novalid_pixels)
-            print('<<< num_nomask px= ', num_nomask_px)
+            print('<<< num_nomask pixels= ', num_nomask_pixels)
             print('<<< num_failed_norm= ', num_failed_norm)
             print('<<< num_not_256= ', num_not_256)
             print('<<< num_px_outside_extent= ', num_px_outside_extent)
@@ -234,7 +241,7 @@ def main(test=None):
             total_has_nans += num_has_nans
             total_novalid_layer += num_novalid_layer
             total_novalid_pixels += num_novalid_pixels
-            total_nomask_px += num_nomask_px
+            total_nomask_pixels += num_nomask_pixels
             total_skip_nomask_pixels += num_skip_nomask_pixels
             total_failed_norm += num_failed_norm
             total_num_not_256 += num_not_256     
@@ -246,7 +253,7 @@ def main(test=None):
         print(f'>>>total has  NANs: {total_has_nans}')
         print(f'>>>total no valid layer : {total_novalid_layer}')
         print(f'>>>total no valid  pixels : {total_novalid_pixels}')
-        print(f'>>>total no mask px : {total_nomask_px}')
+        print(f'>>>total no mask pixels : {total_nomask_pixels}')
         print(f'>>>num failed normalization : {total_failed_norm}')
         print(f'>>>num not 256: {total_num_not_256}')
         print(f'>>>num px outside extent: {total_num_px_outside_extent}')

@@ -5,8 +5,8 @@ from tqdm import tqdm
 import click
 import shutil
 import signal
-from scripts.process_modules.process_dataarrays_module  import  make_train_folders, get_incremental_filename, select_tiles_and_split
-from scripts.process_modules.process_helpers import handle_interrupt
+from scripts.process.process_dataarrays  import  make_train_folders, get_incremental_filename, select_tiles_and_split
+from scripts.process.process_helpers import handle_interrupt
 
 @click.command()
 @click.option("--test",is_flag=True)

@@ -42,7 +42,7 @@ from wandb import Artifact
 from datetime import datetime
 # .............................................................
 
-from scripts.process_modules.process_helpers import handle_interrupt
+from scripts.process.process_helpers import handle_interrupt
 from scripts.train_modules.train_helpers import is_sweep_run
 from scripts.train_modules.train_classes import  UnetModel,   Segmentation_training_loop 
 from scripts.train_modules.train_functions import  loss_chooser, wandb_initialization, job_type_selector, create_subset

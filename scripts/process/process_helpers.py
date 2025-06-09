@@ -190,8 +190,6 @@ def read_raster(image_path, band_to_read=1):
         metadata = src.meta.copy()
     return data, metadata
 
-
-
 def write_raster(output_path, data, metadata):
     """Writes a raster dataset to the specified output path."""
     with rasterio.open(
@@ -222,7 +220,6 @@ def check_and_rescale(data, metadata, glob_max, threshold=0.8):
     print(f"---Rescaled from {loc_max} to {glob_max}")
     return data, metadata, scale_factor
 
-
 # DATAARRAY TESTS
 
 def dataset_type(da):
@@ -232,8 +229,6 @@ def dataset_type(da):
         print('---da is a dataarray')
     else:
         print('---da is not a dataset or dataarray')
-
-
 
 def open_dataarray(nc):
     da =xr.open_dataarray(nc)
@@ -247,8 +242,9 @@ def print_dataarray_info(da):
         print(f"---num unique vals = {len(np.unique(layer_data.values))}")
         if len(np.unique(layer_data.values)) < 4:
             print(f"---unique vals = {np.unique(layer_data.values)}")
-        print(f'---Layer crs={layer_data.rio.crs}')   
-        print('-------------------------') 
+        print(f'---Layer crs={layer_data.rio.crs}')  
+        print('---------------------') 
+    print('^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n') 
 
 def check_dataarray_list(dataarrays, layer_names):
     for i, da in enumerate(dataarrays):
@@ -289,7 +285,7 @@ def pad_tile(tile, expected_size=250, pad_value=0):
         # No padding needed
         return tile
 
-# CHECKS FOR TILES (MULTIBAND TIFS)
+# CHECKS FOR  *MULTIBAND TIFS* TILES
 
 def print_tiff_info_TSX( image):
     print(f'+++ PRINT TIFF INFO ---{image.name}')
