@@ -129,11 +129,13 @@ def main(train, test):
     bce_weight = 0.35 # FOR BCE_DICE
     ###########################################################
     # Dataset Setup
-    input_folders = [i for i in dataset_path.iterdir()]
+    input_folders = [i for i in dataset_path.iterdir() if i.is_dir() and not i.name.startswith(".")]
+ 
+    print(f">>>Input folders: {input_folders}")
     assert len(input_folders) == 1
     dataset_name = input_folders[0].name
     dataset_path = dataset_path / dataset_name
-    print(f"Dataset: {dataset_path}")
+    print(f">>>Dataset: {dataset_path}")
 
     if user_loss != 'focal':
         focal_alpha = None
@@ -179,7 +181,7 @@ def main(train, test):
     run_name = f"{dataset_name}_{timestamp}_BS{config.batch_size}_s{config.subset_fraction}_{loss_desc}"  
 
     wandb.run.name = run_name
-    wandb.run.save()
+    # wandb.run.save()
     print(f"---config.name: {config.name}")
 
     if is_sweep_run():
