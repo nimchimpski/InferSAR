@@ -73,16 +73,16 @@ signal.signal(signal.SIGINT, handle_interrupt)
 
 def main(train, test):
     """
-    CONDA ENVIRONMENT = 'floodenv2'
+    CONDA ENVIRONMENT = 'floodai_train'
     """
     device = pick_device()                       # used everywhere below
-    print(f"⇢ Using device: {device}")
+    print(f">>> Using device: {device}")
 
     env_file = repo_root / ".env"
     if env_file.exists():
         load_dotenv(env_file)
     else:
-        print("Warning: .env not found; using shell environment")
+        print(">>>Warning: .env not found; using shell environment")
 
 
     if test and train:
@@ -110,7 +110,7 @@ def main(train, test):
 
     test_ckpt_path = repo_root / "checkpoints" / "ckpt_INPUT"
     save_path = repo_root / "results"
-    project = "TSX"
+    project = "LAUSANNE"
     subset_fraction = 1
     bs = 8
     max_epoch =100
