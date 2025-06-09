@@ -21,7 +21,7 @@ def main(test=None):
     src_base = repo_dir / 'data' / '2interim' / 'TSX_tiles' / 'NORM_TILES_FOR_SELECT_AND_SPLIT_INPUT'
     dataset_name = None
     ############################################
-    MAKEFOLDER = False
+    MAKEFOLDER = True
     analysis_threshold=1
     mask_threshold=0.3
     percent_under_thresh=0.25 # 0.001 = 1% 
