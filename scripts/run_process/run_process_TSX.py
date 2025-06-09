@@ -6,6 +6,7 @@ from tqdm import tqdm
 import time
 import os
 import click
+import logging
 from rasterio.warp import calculate_default_transform, reproject, Resampling
 
 from scripts.process.process_tiffs import create_event_datacube_TSX, clean_mask,  reproject_to_4326_fixpx_gdal, make_float32,  create_extent_from_mask,  clip_image_to_mask_gdal, create_valid_mask
@@ -15,22 +16,32 @@ from scripts.process.process_helpers import  print_tiff_info_TSX, write_minmax_t
 
 start=time.time()
 
+logging.basicConfig(
+    level=logging.DEBUG,                            # minimum level to emit
+    format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+logger = logging.getLogger(__name__)
+
 @click.command()
 @click.option('--test', is_flag=True, help='loading from test folder', show_default=False)
 
 def main(test=None):
 
     ############################################################################
-    # repo_src = Path(r"Y:\1NEW_DATA\1data\2interim\ALL TSX PROCESSING")
-    repo_root = Path('/Users/alexwebb/Library/Mobile Documents/com~apple~CloudDocs/Documents/coding/floodai/UNOSAT_FloodAI_v2')
-    repo_src = repo_root / 'data' / '2interim'
+    # data_src = Path(r"Y:\1NEW_DATA\1data\2interim\ALL TSX PROCESSING")
+    repo_root = Path('/Users/alexwebb/laptop_coding/floodai/UNOSAT_FloodAI_v2')
+    data_src = repo_root / 'data' / '2interim'
+
+    logger.info(f'>>>data_src= {data_src}')
+    exit()
 
     if test:
         print('>>>TEST MODE<<<')
-        dataset =  repo_src / 'TSX_TO_PROCESS_TEST' 
+        dataset =  data_src / 'TSX_TO_PROCESS_TEST' 
     else:
         print('>>>FULL DATASET MODE<<<')
-        dataset =  repo_src / 'SAR_TO_PROCESS_INPUT' 
+        dataset =  data_src / 'SAR_TO_PROCESS_INPUT' 
         # dataset=Path(r"Y:\1NEW_DATA\1data\2interim\TSX aa datacubes") 
         # dataset = Path(r'Y:\1NEW_DATA\1data\2interim\TSX aa datacubes\ok')
     make_tifs = 0
@@ -39,7 +50,7 @@ def main(test=None):
     make_norm_tiles = 1
     norm_func = 'logclipmm_g' # 'mm' or 'logclipmm'
     minmax_path = repo_root / 'configs' / 'global_minmax_INPUT' / 'global_minmax.json'
-    percent_non_flood = 0
+    percent_non_flood = 1
     ############################################################################
     print(f'>>>make_tifs= {make_tifs==1} \n>>>make_datacubes= {make_datacubes==1} \n>>>get minmax= {get_minmax==1} \n>>>make_tiles= {make_norm_tiles==1}')
 
@@ -214,7 +225,7 @@ def main(test=None):
             event_code = "_".join(cube.name.split('_')[:2])
             print("\n>>>>>>>>>>>> cube >>>>>>>>>>>>>>>=", cube.name)
             print(">>>event_code=", event_code)
-            save_tiles_path = repo_src / 'TSX_TILES' / 'NORM_TILES_FOR_SELECT_AND_SPLIT_INPUT' / f"{event_code}_normalized_tiles_{norm_func}_pcnf{percent_non_flood}"
+            save_tiles_path = data_src / 'TSX_TILES' / 'NORM_TILES_FOR_SELECT_AND_SPLIT_INPUT' / f"{event_code}_normalized_tiles_{norm_func}_pcnf{percent_non_flood}"
             if save_tiles_path.exists():
                 print(f"### Deleting existing tiles folder: {save_tiles_path}")
                 # delete the folder and create a new one
