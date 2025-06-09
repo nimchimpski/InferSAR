@@ -36,6 +36,8 @@ QGIS/images
 *.ckpt
 *.code-workspace
 *.nc
+*.tif
+*.tiff
 
 # Ignore specific config or sensitive files
 configs/secrets.yaml
