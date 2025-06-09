@@ -102,7 +102,7 @@ class FloodDataset(Dataset):
 
         # print(f"---model_input shape: {model_input.shape}")  # Should print torch.Size([batch_size, 2, 256, 256])  
 
-        model_input = model_input.cuda() #???
+        # model_input = model_input.cuda() #???
 
         # EXTRACT MASK TO BINARY
         # print('---mask index:', self.inputs.index('mask'))
@@ -296,7 +296,7 @@ class Segmentation_training_loop(pl.LightningModule):
         weights[mask == 0] = non_flood_weight
         weights[mask == 1] = flood_weight
 
-        weights = weights.to('cuda')
+        # weights = weights.to('cuda')
 
         return weights
     
@@ -307,7 +307,7 @@ class Segmentation_training_loop(pl.LightningModule):
 
             # print(f'*********computing dynamic weights')
             weights = self.compute_dynamic_weights(masks)
-            weights = weights.to('cuda')
+            # weights = weights.to('cuda')
             assert masks.device == weights.device
             dynamic_bool = True
             return  (loss * weights).mean(), dynamic_bool
