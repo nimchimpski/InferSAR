@@ -50,7 +50,7 @@ from scripts.train_modules.train_functions import  loss_chooser, wandb_initializ
 #.............................................................
 # PATHS DEFINITIONS ANd CONSTANTS
 repo_root = Path(__file__).resolve().parents[2]
-print(f"repo root: {repo_root}")
+# print(f"repo root: {repo_root}")
 
 os.environ['KMP_DUPLICATE_LIB_OK'] = "True"
 
@@ -113,7 +113,7 @@ def main(train, test):
     project = "LAUSANNE"
     subset_fraction = 1
     bs = 8
-    max_epoch =100
+    max_epoch =15
     early_stop = False
     patience=10
     num_workers = 8
