@@ -235,7 +235,7 @@ def main(test=None):
             event_code = "_".join(cube.name.split('_')[:2])
             logger.info("\n>>>>>>>>>>>> cube >>>>>>>>>>>>>>>=", cube.name)
             logger.info(">>>event_code=", event_code)
-            save_tiles_path = repo_root / 'data' / '3processed' / 'SAR_TILES' / 'NORM_TILES_FOR_SELECT_AND_SPLIT_INPUT' / f"{event_code}_normalized_tiles_{norm_func}_pcnf{percent_non_flood}"
+            save_tiles_path = repo_root / 'data' / '3processed' / 'sar_tiles'  / f"{event_code}_normalized_tiles_{norm_func}_pcnf{percent_non_flood}"
             if save_tiles_path.exists():
                 logger.info(f"### Deleting existing tiles folder: {save_tiles_path}")
                 # delete the folder and create a new one
