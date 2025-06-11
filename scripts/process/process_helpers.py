@@ -11,28 +11,31 @@ import fiona
 import json
 import random
 import sys
+import logging
 from tqdm import tqdm
 
+
+logger = logging.getLogger(__name__)
 
 # CHECKS FOR INITIAL FOLDERS
 
 def check_single_input_filetype(folder,  title, fsuffix):
-    # print(f"---Checking for {title} in {folder}")
-    # print(f"---Suffix: {fsuffix}")
-    # print(f"---Title: {title}")
+    # logger.info(f"---Checking for {title} in {folder}")
+    # logger.info(f"---Suffix: {fsuffix}")
+    # logger.info(f"---Title: {title}")
     input_list = [i for i in folder.iterdir() if i.is_file() and i.suffix.lower() == fsuffix.lower() and title.lower() in i.name.lower()]
 
     if len(input_list) == 0:
-        print(f"---No file with '{title}' found in {folder}")
+        logger.info(f"---No file with '{title}' found in {folder}")
         return None
     elif len(input_list) > 1:
-        print(f"---Multiple images found in {folder}. Using the first one. Delete the rest!")
+        logger.info(f"---Multiple images found in {folder}. Using the first one. Delete the rest!")
         return None
     return input_list[0]
 
 def path_not_exists(input_path):
     if not  input_path.exists():
-        print(f"---no {input_path.name} found in {input_path}")
+        logger.info(f"---no {input_path.name} found in {input_path}")
         return True
 
 # NORMALISING
@@ -72,7 +75,7 @@ def rescale_image_minmax(image, min, max, output_path):
         ) as dst:
             dst.write(data)
 
-    print(f"Normalized image saved to {output_path}")
+    logger.info(f"Normalized image saved to {output_path}")
 
 def compute_dataset_minmax(dataset, band_to_read=1):
     """
@@ -85,31 +88,31 @@ def compute_dataset_minmax(dataset, band_to_read=1):
         global_min (float): Global minimum pixel value.
         global_max (float): Global maximum pixel value.
     """
-    print('+++in compute_dataset_minmax')
+    logger.info('+++in compute_dataset_minmax')
     global_min = float('inf')
     global_max = float('-inf')
     
     # Iterate through all image files in each event
     for event in dataset.iterdir(): # ITER EVENT
-        print(f'---event= {event.name}')    
+        logger.info(f'---event= {event.name}')    
         if event.is_dir():
             images = list(event.rglob('*image*.tif') )
-            print(f'---num images= {len(images)}')
+            logger.info(f'---num images= {len(images)}')
             if len(images) != 1:
                 raise (f"---Error: {event.name} contains {len(images)} images. Skipping...")
             image = images[0]
 
-            # print(f"---Processing {image}")
+            # logger.info(f"---Processing {image}")
             try:
                 lmin, lmax = compute_image_minmax(image, band_to_read)
                 global_min = int(min(global_min, lmin))
                 global_max = int(max(global_max, lmax))
-                print(f'---global_min={global_min}, global_max={global_max}')
+                logger.info(f'---global_min={global_min}, global_max={global_max}')
             except Exception as e:
-                print(f"Error processing {image}: {e}")
+                logger.info(f"Error processing {image}: {e}")
                 continue
 
-    print(f"Global Min: {global_min}, Global Max: {global_max}")
+    logger.info(f"Global Min: {global_min}, Global Max: {global_max}")
     return global_min, global_max
 
 '''
@@ -119,8 +122,8 @@ def check_loc_max_and_rescale(image, glob_max, output_path, band_to_read=1):
         locmin, locmax = int(data.min()), int(data.max())
         if locmax < 0.8*glob_max:
             data = rescale_image_minmax(data, glob_max, locmax)  
-            print(f"---Rescaled {image.name} from {locmax} to {glob_max}")      
-            print(f'---min { int(data.min())}, max { int(data.max())}')
+            logger.info(f"---Rescaled {image.name} from {locmax} to {glob_max}")      
+            logger.info(f'---min { int(data.min())}, max { int(data.max())}')
             # Write the normalized image
             with rasterio.open(
                 output_path,
@@ -145,7 +148,7 @@ def write_minmax_to_json(min, max, output_path):
                                Example: {"SAR_HH": {"min": 0.0, "max": 260.0}, "DEM": {"min": -10.0, "max": 3000.0}}
         output_path (str or Path): File path to save the JSON file.
     """
-    print(f'---minmaxvalsdict= {min, max}')
+    logger.info(f'---minmaxvalsdict= {min, max}')
     output_path = Path(output_path)
 
     # Ensure the parent directory exists
@@ -155,7 +158,7 @@ def write_minmax_to_json(min, max, output_path):
     with open(output_path, 'w') as json_file:
         json.dump({'hh': {'min': min, 'max' : max}}, json_file, indent=4)
     
-    print(f"Min and max values saved to {output_path}")
+    logger.info(f"Min and max values saved to {output_path}")
 
 
 def read_minmax_from_json(input_path):
@@ -169,9 +172,9 @@ def compute_image_minmax(image, band_to_read=1):
         # Read the data as a NumPy array
         data = src.read(band_to_read)  # Read the first band
         min, max = int(data.min()), int(data.max())
-        print(f"---{image.name}: Min: {data.min()}, Max: {data.max()}")
+        logger.info(f"---{image.name}: Min: {data.min()}, Max: {data.max()}")
         # get image size in pixels
-        print(f"---: Shape: {data.shape}")
+        logger.info(f"---: Shape: {data.shape}")
     return min, max
 
 def normalize_imagedata_0( data, glob_max, loc_max):
@@ -215,61 +218,61 @@ def process_raster_minmax(image_path, output_path, glob_max, threshold=0.8):
 def check_and_rescale(data, metadata, glob_max, threshold=0.8):
     """Checks the local max and rescales the data if below a threshold."""
     loc_min, loc_max = data.min(), data.max()
-    print(f"---Local min: {loc_min}, Local max: {loc_max}")
+    logger.info(f"---Local min: {loc_min}, Local max: {loc_max}")
     data, scale_factor = rescale_image_minmax(data, glob_max, loc_max)
-    print(f"---Rescaled from {loc_max} to {glob_max}")
+    logger.info(f"---Rescaled from {loc_max} to {glob_max}")
     return data, metadata, scale_factor
 
 # DATAARRAY TESTS
 
 def dataset_type(da):
     if isinstance(da, xr.Dataset):
-        print('---da is a dataset')
+        logger.info('---da is a dataset')
     elif isinstance(da, xr.DataArray):
-        print('---da is a dataarray')
+        logger.info('---da is a dataarray')
     else:
-        print('---da is not a dataset or dataarray')
+        logger.info('---da is not a dataset or dataarray')
 
 def open_dataarray(nc):
     da =xr.open_dataarray(nc)
     return da
 
 def print_dataarray_info(da):
-    print('++++++++++++PRINT DATARAY INFO--------------') 
+    logger.info('++++++++++++PRINT DATARAY INFO--------------') 
     for layer in da.coords["layer"].values:
         layer_data = da.sel(layer=layer)
-        print(f"---Layer '{layer}': Min={layer_data.min().item()}, Max={layer_data.max().item()}")
-        print(f"---num unique vals = {len(np.unique(layer_data.values))}")
+        logger.info(f"---Layer '{layer}': Min={layer_data.min().item()}, Max={layer_data.max().item()}")
+        logger.info(f"---num unique vals = {len(np.unique(layer_data.values))}")
         if len(np.unique(layer_data.values)) < 4:
-            print(f"---unique vals = {np.unique(layer_data.values)}")
-        print(f'---Layer crs={layer_data.rio.crs}')  
-        print('---------------------') 
-    print('^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n') 
+            logger.info(f"---unique vals = {np.unique(layer_data.values)}")
+        logger.info(f'---Layer crs={layer_data.rio.crs}')  
+        logger.info('---------------------') 
+    logger.info('^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n') 
 
 def check_dataarray_list(dataarrays, layer_names):
     for i, da in enumerate(dataarrays):
         if not hasattr(da, 'rio'):
-            print(f"---Error: {layer_names[i]} lacks rioxarray accessors. Reinitializing...")
+            logger.info(f"---Error: {layer_names[i]} lacks rioxarray accessors. Reinitializing...")
         else:
-            print('---has attr')
-        print('---type da= ',type(da))  
-        print(f"---Layer {i} name: {layer_names[i]}")
-        print(f"---Shape: {da.shape}, CRS: {da.rio.crs}, Resolution: {da.rio.resolution()}, Bounds: {da.rio.bounds()}")
+            logger.info('---has attr')
+        logger.info('---type da= ',type(da))  
+        logger.info(f"---Layer {i} name: {layer_names[i]}")
+        logger.info(f"---Shape: {da.shape}, CRS: {da.rio.crs}, Resolution: {da.rio.resolution()}, Bounds: {da.rio.bounds()}")
         if da.rio.crs != dataarrays[0].rio.crs:
-            print(f"---Mismatch in CRS for {layer_names[i]}")
+            logger.info(f"---Mismatch in CRS for {layer_names[i]}")
         if da.rio.resolution() != dataarrays[0].rio.resolution():
-            print(f"---Mismatch in Resolution for {layer_names[i]}")
+            logger.info(f"---Mismatch in Resolution for {layer_names[i]}")
         dataarrays[i] = da.astype('float32')
         # chack the datatype
-        print(f"---Data Type: {da.dtype}")
+        logger.info(f"---Data Type: {da.dtype}")
 
 
 def nan_check(nparray):
     if np.isnan(nparray).any():
-        print("----Warning: NaN values found in the data.")
+        logger.info("----Warning: NaN values found in the data.")
         return False
     else:
-        print("----NO NANS FOUND")
+        logger.info("----NO NANS FOUND")
         return True
 
 
@@ -288,7 +291,7 @@ def pad_tile(tile, expected_size=250, pad_value=0):
 # CHECKS FOR  *MULTIBAND TIFS* TILES
 
 def print_tiff_info_TSX( image):
-    print(f'+++ PRINT TIFF INFO ---{image.name}')
+    logger.info(f'+++ logger.info TIFF INFO ---{image.name}')
     if image:
 
         with rasterio.open(image) as src:
@@ -301,45 +304,45 @@ def print_tiff_info_TSX( image):
                 min, max = min_max_vals(band_data)
                 name = get_band_name(i, src)
                 numvals =  num_band_vals(band_data)
-                print(f"---Band {name}: Min={min}, Max={max}")
-                print(f"---num unique vals = {numvals}")
-                print(f"---CRS: {src.crs}")
-                print(f'---resolution= {src.res}')
+                logger.info(f"---Band {name}: Min={min}, Max={max}")
+                logger.info(f"---num unique vals = {numvals}")
+                logger.info(f"---CRS: {src.crs}")
+                logger.info(f'---resolution= {src.res}')
         
 def check_single_tile(tile):
     with rasterio.open(tile) as src:
-        # print('---tile:', tile.name)
+        # logger.info('---tile:', tile.name)
         # Read all datasdsdfsdfsdvsdvs
         data = src.read()
         # LOOP THRU BANDS
         for band in range(1, src.count + 1):
             band_data = data[band - 1]
             name = get_band_name(band, src)
-            print(f'\n---{band}={name}')
+            logger.info(f'\n---{band}={name}')
             numvals =  num_band_vals(band_data)
             if name in ['mask', 'extent']:
                 # CHECK NUM UNIQUE VALS
                 if numvals >2:
-                    print('---not 2 vals , ', numvals)
+                    logger.info('---not 2 vals , ', numvals)
                     return
                   # CHECK VALS ARE 0 OR 1
                 min, max = min_max_vals(band_data)
                 if round(min) not in [0, 1] or round(max) not in [0, 1]:
-                    print(f'---min={min}, max={min}')
+                    logger.info(f'---min={min}, max={min}')
                     pass
             else:
-                # print(f'--num_band_vals={numvals}')
+                # logger.info(f'--num_band_vals={numvals}')
                 # CHECK MIN MAX INSIDE 0 AND 1 - NORMALIZED
                 min, max = min_max_vals(band_data)
                 if min == max:
-                    print(f'---uniform values in {name} band: {min}, {max}')
+                    logger.info(f'---uniform values in {name} band: {min}, {max}')
                 if min < 0 or max > 1:
-                    print(f'---out of range values in {name} band: {min}, {max}')
+                    logger.info(f'---out of range values in {name} band: {min}, {max}')
                     raise ValueError(f'---out of range values in {name} band: {min}, {max}')
 
 def rasterize_kml_rasterio(kml_path, output_path, pixel_size=0.0001, burn_value=1):
     # Convert KML to GeoJSON using Fiona
-    print(f"+++++Rasterizing extent from {kml_path} to {output_path}")
+    logger.info(f"+++++Rasterizing extent from {kml_path} to {output_path}")
     with fiona.open(kml_path, 'r') as src:
         geometries = [shape(feature['geometry']) for feature in src]
 
@@ -373,7 +376,7 @@ def rasterize_kml_rasterio(kml_path, output_path, pixel_size=0.0001, burn_value=
         )
         dst.write(raster, 1)
 
-    print(f"Rasterized extent saved to {output_path}")
+    logger.info(f"Rasterized extent saved to {output_path}")
 
 # SUBFUNCS FOR MULTD TILES/TIFS
 
@@ -395,7 +398,7 @@ def handle_interrupt(signal, frame):
     '''
     usage: signal.signal(signal.SIGINT, handle_interrupt)
     '''
-    print("Interrupt received! Cleaning up...")
+    logger.info("Interrupt received! Cleaning up...")
     # Add any necessary cleanup code here (e.g., saving model checkpoints)
     sys.exit(0)
 
@@ -405,17 +408,17 @@ def calc_ratio(tiles):
     for tile in tqdm(tiles.iterdir(), total=len(list(tiles.iterdir()))):
         if tile.suffix != ".tif":
             continue
-        # print(f"---Processing {tile.name}")
+        # logger.info(f"---Processing {tile.name}")
         with rasterio.open(tile) as src:
             data = src.read(3)
             flooded_count += np.sum(data == 1)
             non_flooded_count += np.sum(data == 0)
-            # print(f'---flooded_count: {flooded_count}')
+            # logger.info(f'---flooded_count: {flooded_count}')
 
 
     # Calculate class ratio
     total_pixels = flooded_count + non_flooded_count
     class_ratio = flooded_count / total_pixels
-    # print(f'---event: {event.name}')
-    print(f"{tile.parent.name} Ratio: {class_ratio:.2f}")
+    # logger.info(f'---event: {event.name}')
+    logger.info(f"{tile.parent.name} Ratio: {class_ratio:.2f}")
     return class_ratio

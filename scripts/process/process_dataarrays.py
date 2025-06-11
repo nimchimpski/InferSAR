@@ -11,6 +11,7 @@ import rasterio
 import sys
 import json
 import pandas as pd
+import logging
 from pyproj import Transformer
 from geopy.geocoders import Nominatim
 from pathlib import Path
@@ -21,6 +22,9 @@ import rioxarray as rxr
 from rioxarray import open_rasterio
 from rasterio.windows import Window
 from scripts.process.process_helpers import  print_dataarray_info, nan_check, dataset_type
+
+
+logger = logging.getLogger(__name__)
 
 # NORMALIZE
 def custom_normalize(array, lower_percentile=2, upper_percentile=98, clip_range=(0, 1)):
@@ -37,12 +41,12 @@ def custom_normalize(array, lower_percentile=2, upper_percentile=98, clip_range=
     Returns:
     - normalized_array: The normalized data array (same type as input)
     """
-    print('+++in custom_normalize fn')
-    print('---array type',type(array))
+    logger.info('+++in custom_normalize fn')
+    logger.info('---array type',type(array))
     
     # Check if the input is an xarray.DataArray
     if isinstance(array, xr.DataArray):
-        print('---array is xarray.DataArray')
+        logger.info('---array is xarray.DataArray')
 
         # Rechunk 'y' dimension into a single chunk, leave other dimensions unchanged
         array = array.chunk({'y': -1})  
@@ -60,7 +64,7 @@ def custom_normalize(array, lower_percentile=2, upper_percentile=98, clip_range=
         return normalized_array
 
     else:
-        print('---array is not xarray.DataArray')
+        logger.info('---array is not xarray.DataArray')
         # Handle as a NumPy array if not xarray.DataArray
         min_val = np.nanpercentile(array, lower_percentile)
         max_val = np.nanpercentile(array, upper_percentile)
@@ -74,18 +78,18 @@ def custom_normalize(array, lower_percentile=2, upper_percentile=98, clip_range=
         return normalized_array
 
 def normalise_a_tile(file_path, output_path):
-    # print('++++IN NORMALIZE A TILE')
+    # logger.info('++++IN NORMALIZE A TILE')
     output_path = output_path / file_path.name
     if file_path.suffix.lower() not in ['.tif', '.tiff']:
         return
-    # print(f"---Normalizing {file_path.name}")
+    # logger.info(f"---Normalizing {file_path.name}")
     with rasterio.open(file_path) as src:
         meta = src.meta.copy()
         meta.update(dtype='float32')  # Ensure dtype can store normalized values
 
         with rasterio.open(output_path, 'w', **meta) as dst:
             for band in range(1, src.count + 1):
-                # print(f"---normalizing band {band}")
+                # logger.info(f"---normalizing band {band}")
                 try:
                     band_name = src.descriptions[band - 1].lower()
                     data = src.read(band)
@@ -93,41 +97,41 @@ def normalise_a_tile(file_path, output_path):
                     if band_name in ['vv','vh','grd','dem','slope' ] and np.min(data) != np.max(data) :
                         normalized_data = (data - np.min(data)) / (np.max(data) - np.min(data))
                         dst.write(normalized_data.astype('float32'), band)
-                        # print(f"---band {band_name} to be normalized")
+                        # logger.info(f"---band {band_name} to be normalized")
                     else:
                         dst.write(data, band)
-                        # print(f"---band {band_name} not normalized")
+                        # logger.info(f"---band {band_name} not normalized")
                     dst.set_band_description(band, band_name)
 
 
                 except Exception as e:
-                    print(f"---Error normalizing band {band}: {e}")
+                    logger.info(f"---Error normalizing band {band}: {e}")
                     dst.write(data, band)
 
-    # print(f"Normalized tile saved to {output_path}")
+    # logger.info(f"Normalized tile saved to {output_path}")
 
 def normalize_inmemory_tile(tile):
     """
     Min-max normalize all layers in a tile except specified layers.
     """
-    # print('+++in normalize_inmemory_tile')
+    # logger.info('+++in normalize_inmemory_tile')
     skip_layers =  ['mask', 'valid']
     normalized_tile = tile.copy()
 
     for layer in tile.coords['layer'].values:
-        # print(f"---Normalizing layer '{layer}'")
+        # logger.info(f"---Normalizing layer '{layer}'")
         if layer in skip_layers:
-            # print(f"---Skipping normalization for layer '{layer}'")
+            # logger.info(f"---Skipping normalization for layer '{layer}'")
             continue
         
         layer_data = tile.sel(layer=layer)
         layer_min, layer_max = layer_data.min().item(), layer_data.max().item()
-        # print(f"---Layer '{layer}': Min={layer_min}, Max={layer_max}")
+        # logger.info(f"---Layer '{layer}': Min={layer_min}, Max={layer_max}")
         if layer_min != layer_max:  # Avoid division by zero
             normalized_tile.loc[dict(layer=layer)] = (layer_data - layer_min) / (layer_max - layer_min)
             normalized=True
         else:
-            print(f"---Layers '{layer}' has constant values; skipping normalization")
+            logger.info(f"---Layers '{layer}' has constant values; skipping normalization")
             normalized=False
         return tile.astype('float32'), normalized
 
@@ -156,7 +160,7 @@ def log_clip_minmaxnorm_layer(tile):
                 preprocessed_tile.loc[dict(layer=layer)] = (layer_data - layer_min) / (layer_max - layer_min)
                 normalized= True
             else:
-                print(f"---Layer '{layer}' in tile '{tile.attrs['filename']}' is uniform; skipping normalization")
+                logger.info(f"---Layer '{layer}' in tile '{tile.attrs['filename']}' is uniform; skipping normalization")
                 normalized= False
     return preprocessed_tile.astype('float32'), normalized
 
@@ -167,9 +171,9 @@ def log_clip_minmaxnorm(tile, global_min, global_max):
     2. Clip Extreme Values
     3. Normalize to [0, 1]
     """
-    # print('+++in log_clip_minmaxnorm')
-    # print('---global_min= ', global_min)
-    # print('---global_max= ', global_max)
+    # logger.info('+++in log_clip_minmaxnorm')
+    # logger.info('---global_min= ', global_min)
+    # logger.info('---global_max= ', global_max)
     skip_layers = ['mask', 'valid']
     preprocessed_tile = tile.copy()
 
@@ -188,7 +192,7 @@ def log_clip_minmaxnorm(tile, global_min, global_max):
                 preprocessed_tile.loc[dict(layer=layer)] = (layer_data - global_min) / (global_max - global_min)
                 normalized = True
             else:
-                print(f"---Global min and max are identical for layer '{layer}'; skipping normalization.")
+                logger.info(f"---Global min and max are identical for layer '{layer}'; skipping normalization.")
                 normalized = False
     return preprocessed_tile.astype('float32'), normalized
 
@@ -198,17 +202,17 @@ def get_dataarray_minmax(datacube, layer_name):
     Returns:
         tuple: (global_min, global_max)
     """
-    # print('+++in calculate_global_min_max_nc')
-    # print('---layer_name= ', layer_name)
+    # logger.info('+++in calculate_global_min_max_nc')
+    # logger.info('---layer_name= ', layer_name)
     
     da = xr.open_dataarray(datacube)
-    # print('---da= ', da)
+    # logger.info('---da= ', da)
     # ds = xr.open_dataset(datacube)
-    # print('---ds= ', ds)
+    # logger.info('---ds= ', ds)
     # var = list(ds.data_vars)[0]
     # da = ds[var]
 
-    # print('---da layers= ', da.coords["layer"].values)
+    # logger.info('---da layers= ', da.coords["layer"].values)
     
     # Check if the required layer exists
     if layer_name not in da.coords["layer"].values:
@@ -216,15 +220,15 @@ def get_dataarray_minmax(datacube, layer_name):
     
     # Extract layer data
     layer_data = da.sel(layer=layer_name)  # Extract the variable as a NumPy array
-    # print(f"---Extracted data for layer '{layer_name}', shape: {layer_data.shape}")
+    # logger.info(f"---Extracted data for layer '{layer_name}', shape: {layer_data.shape}")
     
     # Flatten pixel values
     all_pixel_values = layer_data.values.flatten()  # Access NumPy array and flatten
-    # print(f"---Flattened pixel values, total: {len(all_pixel_values)}")
+    # logger.info(f"---Flattened pixel values, total: {len(all_pixel_values)}")
     # CALCULATE TRUE MIN MAX
     local_min = np.min(all_pixel_values)
     local_max = np.max(all_pixel_values)
-    # print(f"Calculated global min={global_min}, max={global_max}")
+    # logger.info(f"Calculated global min={global_min}, max={global_max}")
     
     return local_min, local_max
 
@@ -232,10 +236,10 @@ def compute_dataset_minmax(dataset, layer_name):
     """
 
     """
-    print(f'+++in compute_dataset_min_max fn')
+    logger.info(f'+++in compute_dataset_min_max fn')
     glob_min = float('inf')
     glob_max = float('-inf')
-    print(f'---global min {glob_min}, global max {glob_max}---')
+    logger.info(f'---global min {glob_min}, global max {glob_max}---')
 
     events = list(dataset.iterdir())
     for event in events:
@@ -245,10 +249,10 @@ def compute_dataset_minmax(dataset, layer_name):
         lmin, lmax = get_dataarray_minmax(cube, layer_name)
         glob_min = min(glob_min, lmin)   
         glob_max = max(glob_max, lmax)
-        print(f"Global min: {glob_min}, max: {glob_max}")
+        logger.info(f"Global min: {glob_min}, max: {glob_max}")
             
 
-    print(f"Global Min: {glob_min}, Global Max: {glob_max}")
+    logger.info(f"Global Min: {glob_min}, Global Max: {glob_max}")
     return int(glob_min), int(glob_max)
 
 def update_min_max_csv(existing_file, new_values, output_file=None):
@@ -277,7 +281,7 @@ def update_min_max_csv(existing_file, new_values, output_file=None):
     if output_file is None:
         output_file = existing_file
     df.to_csv(output_file, index=False)
-    print(f"Updated min-max saved to {output_file}")
+    logger.info(f"Updated min-max saved to {output_file}")
 
 def write_min_max_to_json(min, max, output_path):
     """
@@ -288,7 +292,7 @@ def write_min_max_to_json(min, max, output_path):
                                Example: {"SAR_HH": {"min": 0.0, "max": 260.0}, "DEM": {"min": -10.0, "max": 3000.0}}
         output_path (str or Path): File path to save the JSON file.
     """
-    print(f'---minmaxvalsdict= {min, max}')
+    logger.info(f'---minmaxvalsdict= {min, max}')
     output_path = Path(output_path)
 
     # Ensure the parent directory exists
@@ -298,7 +302,7 @@ def write_min_max_to_json(min, max, output_path):
     with open(output_path, 'w') as json_file:
         json.dump({'hh': {'min': min, 'max' : max}}, json_file, indent=4)
     
-    print(f"Min and max values saved to {output_path}")
+    logger.info(f"Min and max values saved to {output_path}")
 
 def read_min_max_from_json(input_path):
     with open(input_path, 'r') as json_file:
@@ -314,12 +318,12 @@ def has_enough_valid_pixels(file_path, mask_threshold):
     returns REJECTED = 1 if any of the above is NOT true
     has analysis_extent layer?
     """
-    # print('\n+++has_enough_valid_pixels')
-    # print('---file_path= ', file_path.name)
-    # print('---analysis_threshold= ', analysis_threshold)
-    # print('---mask_threshold= ', mask_threshold)
+    # logger.info('\n+++has_enough_valid_pixels')
+    # logger.info('---file_path= ', file_path.name)
+    # logger.info('---analysis_threshold= ', analysis_threshold)
+    # logger.info('---mask_threshold= ', mask_threshold)
     if file_path.suffix.lower() not in ['.tif', '.tiff']:
-        print(f"---Skipping {file_path.name}: not a TIFF file")
+        logger.info(f"---Skipping {file_path.name}: not a TIFF file")
         return 0,0,0
     else:
         try:
@@ -330,7 +334,7 @@ def has_enough_valid_pixels(file_path, mask_threshold):
                 missing_extent = False
                 missing_mask = False
                 rejected = False
-                # print('---rejected= ', rejected)    
+                # logger.info('---rejected= ', rejected)    
 
                 for idx, desc in enumerate(dataset.descriptions):
                     if desc == "mask":  # Find the 'mask' layer by its description
@@ -343,25 +347,25 @@ def has_enough_valid_pixels(file_path, mask_threshold):
                 # ANALYSIS EXTENT
                 # if analysis_extent_layer:
                 #     analysis_extent_data = dataset.read(analysis_extent_layer)
-                #     # print('---analysis_extent_data= ', (analysis_extent_data == 1).sum())
+                #     # logger.info('---analysis_extent_data= ', (analysis_extent_data == 1).sum())
                 #     if ((analysis_extent_data == 1).sum()) / total_pixels >= analysis_threshold:
-                #         # print(f"---EXTENT pixels deficit: {file_path}")
+                #         # logger.info(f"---EXTENT pixels deficit: {file_path}")
                 #            = 0  
                 #     else:
                 #         rejected = 1
                 # else:
                 #     missing_extent = 1
-                # print('---rejected= ', rejected)
+                # logger.info('---rejected= ', rejected)
 
                 # MASK
                 if  mask_layer:
                     mask_data = dataset.read(mask_layer)
                     mask_px = ((mask_data > 0.5).sum()) / total_pixels
-                    # print('---mask_px= ', mask_px)
-                    # print('---mask_threshold= ', mask_threshold)
+                    # logger.info('---mask_px= ', mask_px)
+                    # logger.info('---mask_threshold= ', mask_threshold)
                     if mask_px >= mask_threshold:
-                        # print(f"---MASK pixels deficit: {file_path}")
-                        # print(f'---mask_px > {mask_threshold}  ', mask_px)
+                        # logger.info(f"---MASK pixels deficit: {file_path}")
+                        # logger.info(f'---mask_px > {mask_threshold}  ', mask_px)
                         rejected = False
 
                     else:
@@ -369,17 +373,17 @@ def has_enough_valid_pixels(file_path, mask_threshold):
                     
                 else:
                     missing_mask = True
-                # print('---final rejected= ', rejected)
+                # logger.info('---final rejected= ', rejected)
                 return rejected, missing_extent
         except Exception as e:
-            print(f"---Unexpected error: {e}")
+            logger.info(f"---Unexpected error: {e}")
             return 0,0,0,0  # Handle any other exceptions
 
 def select_tiles_and_split(source_dir, dest_dir, train_ratio, val_ratio, test_ratio, analysis_threshold, mask_threshold, percent_under_thresh,  MAKEFOLDER):
     '''
     TODO return  where selected files is below some threshold or zero
     '''
-    print('\n+++select_tiles_and_split')
+    logger.info('\n+++select_tiles_and_split')
     # Ensure the ratios sum to 1.0
     # assert train_ratio + val_ratio + test_ratio == 1.0, "Ratios must sum to 1.0"
     assert abs(train_ratio + val_ratio + test_ratio - 1.0) < 1e-6, "Ratios must sum to 1.0"
@@ -389,12 +393,12 @@ def select_tiles_and_split(source_dir, dest_dir, train_ratio, val_ratio, test_ra
     test_dir = dest_dir / "test"
 
     total_files = len([f for f in source_dir.iterdir() if f.suffix.lower() in ['.tif', '.tiff']])
-    print(f'---size of folder = {total_files}')
+    logger.info(f'---size of folder = {total_files}')
     if total_files < 300:
-        print(f'---FOLDER SIZE UNDER 300 - SELECTING ALL TILES')
-    print(f'---percent_under_thresh= {percent_under_thresh}')   
+        logger.info(f'---FOLDER SIZE UNDER 300 - SELECTING ALL TILES')
+    logger.info(f'---percent_under_thresh= {percent_under_thresh}')   
     max_under_thresh = int(total_files * (percent_under_thresh))
-    print(f'---max_under_thresh= {max_under_thresh}')
+    logger.info(f'---max_under_thresh= {max_under_thresh}')
 
     rejected = 0
     missing_mask = 0
@@ -414,36 +418,36 @@ def select_tiles_and_split(source_dir, dest_dir, train_ratio, val_ratio, test_ra
 
                 selected_tiles.append(file)
                 continue
-            # print(f"---Checking {file.name}")
+            # logger.info(f"---Checking {file.name}")
             if file.suffix.lower()  in ['.tif', '.tiff'] and 'aux' not in file.name:
                 too_few_px, missing_extent,  = has_enough_valid_pixels(file, mask_threshold)
-                # print(f'---too_few_px= {too_few_px}')
+                # logger.info(f'---too_few_px= {too_few_px}')
                 if too_few_px:
-                    # print(f'---rejected: too_few_px= {too_few_px}')
-                    # print(f'---folder under thresh= {folder_under_thresh}') 
-                    # print(f'---max under thresh= {max_under_thresh}')
+                    # logger.info(f'---rejected: too_few_px= {too_few_px}')
+                    # logger.info(f'---folder under thresh= {folder_under_thresh}') 
+                    # logger.info(f'---max under thresh= {max_under_thresh}')
                     if  folder_under_thresh >= max_under_thresh:
                         rejected +=1
-                        # print(f'---reached max under thresh= {max_under_thresh}')
+                        # logger.info(f'---reached max under thresh= {max_under_thresh}')
                         continue
                     else:
                         folder_under_thresh += 1
-                        # print(f'---allowed: num under thresh= {folder_under_thresh}')
+                        # logger.info(f'---allowed: num under thresh= {folder_under_thresh}')
                         selected_tiles.append(file)
 
                 else:
                     selected_tiles.append(file)
 
-                # print(f'---tot under thresh = {folder_under_thresh}')
+                # logger.info(f'---tot under thresh = {folder_under_thresh}')
 
                 folder_missing_extent  += missing_extent
                 folder_missing_mask += missing_mask
             else:
-                print(f"---Skipping {file.name}: not a TIFF file")
+                logger.info(f"---Skipping {file.name}: not a TIFF file")
 
-        # print(f"---Filtered files: {selected_tiles}")
+        # logger.info(f"---Filtered files: {selected_tiles}")
         num_selected_tiles = len(selected_tiles)
-        print(f'---num_selected_tiles= {num_selected_tiles}')
+        logger.info(f'---num_selected_tiles= {num_selected_tiles}')
 
         if MAKEFOLDER:
             # SHUFFLE FILES
@@ -462,44 +466,44 @@ def select_tiles_and_split(source_dir, dest_dir, train_ratio, val_ratio, test_ra
             for file in train_files:
                 try:
                     shutil.copy(file, train_dir / file.name)
-                    # print(f"---{file.name} copied to {train_dir}")
+                    # logger.info(f"---{file.name} copied to {train_dir}")
                     traintxt.write(f"{file.name}\n")
-                    # print(f"---{file.name} written to train.txt")
+                    # logger.info(f"---{file.name} written to train.txt")
                 except Exception as e:
-                    print(f"Error copying {file}: {e}")
+                    logger.info(f"Error copying {file}: {e}")
 
             for file in val_files:
                 try:
                     shutil.copy(file, val_dir / file.name)
                     valtxt.write(f"{file.name}\n")
                 except Exception as e:
-                    print(f"---Error copying {file}: {e}")
+                    logger.info(f"---Error copying {file}: {e}")
 
             for file in tqdm(test_files, desc="Copying test files"):
                 try:
                     shutil.copy(file, test_dir / file.name)
                     testtxt.write(f"{file.name}\n")
                 except Exception as e:
-                    print(f"---Error copying {file}: {e}")
+                    logger.info(f"---Error copying {file}: {e}")
 
                         # Flush the output to ensure data is written to disk
             traintxt.flush()
             valtxt.flush()
             testtxt.flush()
-            # print(f'---folder total files: {total_files}')
+            # logger.info(f'---folder total files: {total_files}')
             if num_selected_tiles < 100:
-                print(f"#######\n---{source_dir.parent.name} selected tiles: {num_selected_tiles}\n#######")
-            # print(f"---folder train files: {len(train_files)}")
-            # print(f'---folder test files: {len(test_files)}')
-            # print(f"---folder validation files: {len(val_files)}")
+                logger.info(f"#######\n---{source_dir.parent.name} selected tiles: {num_selected_tiles}\n#######")
+            # logger.info(f"---folder train files: {len(train_files)}")
+            # logger.info(f'---folder test files: {len(test_files)}')
+            # logger.info(f"---folder validation files: {len(val_files)}")
             assert int(len(train_files)) + int(len(val_files)) + int(len(test_files)) == num_selected_tiles, "Files not split correctly"
 
-            print('---END OF SPLIT FUNCTION--------------------------------')
+            logger.info('---END OF SPLIT FUNCTION--------------------------------')
     return total_files, num_selected_tiles, rejected, folder_missing_extent, folder_missing_mask, folder_under_thresh
 
 def copy_data_and_generate_txt(data_folders, destination):
     """Copy all files into a centralized destination and create .txt files for train, val, and test."""
-    print('+++in copy_data_and_generate_txt')
+    logger.info('+++in copy_data_and_generate_txt')
     dest_paths = {key: destination / key for key in data_folders}
     txt_files = {key: destination / f"{key}.txt" for key in data_folders}
     
@@ -518,7 +522,7 @@ def copy_data_and_generate_txt(data_folders, destination):
                         shutil.copy(file_path, dest_file_path)
                         # Write the path of the copied file to the .txt file
                         txt_file.write(str(dest_file_path) + '\n')
-        print(f"Copied {key} files and generated {key}.txt")
+        logger.info(f"Copied {key} files and generated {key}.txt")
 
 # CREATE STAC METADATA
 def create_stac_metadata(tile, tile_id, output_dir, parent_dataset_id="datacube_01"):
@@ -592,7 +596,7 @@ def create_stac_metadata(tile, tile_id, output_dir, parent_dataset_id="datacube_
     json_path = f"{output_dir}/{tile_id}.json"
     with open(json_path, "w") as f:
         json.dump(metadata, f, indent=4)
-    print(f"STAC metadata saved to {json_path}")
+    logger.info(f"STAC metadata saved to {json_path}")
 
 # REPROJECT
 def location_to_crs(location, crs):
@@ -645,10 +649,10 @@ def tile_datacube_rxr(datacube_path, save_tiles_path, tile_size, stride, norm_fu
     TODO add date etc to saved tile name?
     TODO add json file with metadata for each tile inv mask and anal_ext pixel count etc
     """
-    print('+++++++in tile_datacube rxr fn ++++++++')
+    logger.info('+++++++in tile_datacube rxr fn ++++++++')
     global_min, global_max = stats
-    print('---FILE global_min= ', global_min)
-    print('---FILE global_max= ', global_max)
+    logger.info(f'---FILE global_min= {global_min}')
+    logger.info(f'---FILE global_max= {global_max}')
     num_tiles = 0
     num_saved = 0
     num_has_nans = 0
@@ -665,24 +669,24 @@ def tile_datacube_rxr(datacube_path, save_tiles_path, tile_size, stride, norm_fu
     var = list(ds.data_vars)[0]
     da = ds[var]
 
-    print('---DS VARS BEFORE TILING = ', list(ds.data_vars))
+    logger.info(f'---DS VARS BEFORE TILING = {list(ds.data_vars)}')
     dataset_type(da)
-    # print('\n---complete DA info before tiling')
-    # print_dataarray_info(da)
+    # logger.info('\n---complete DA info before tiling')
+    # logger.info_dataarray_info(da)
     if da.chunks:
         for dim, chunk in zip(da.dims, da.chunks):
-            print(f"---Dimension '{dim}' has chunk sizes: {chunk}")
+            logger.info(f"---Dimension '{dim}' has chunk sizes: {chunk}")
 
     tile_metadata = []
     inference_tiles = []
 
     # estimate number of tiles that will be made
     total_tiles = (da.x.size // stride) * (da.y.size // stride)
-    print(f'---total_tiles= {total_tiles}') 
+    logger.info(f'---total_tiles= {total_tiles}') 
     max_non_flooded = total_tiles * percent_non_flood
-    print(f'---max_non_flooded= {max_non_flooded}')
+    logger.info(f'---max_non_flooded= {max_non_flooded}')
 
-    # print('----START TILING----------------')
+    # logger.info('----START TILING----------------')
     for y_start in tqdm(range(0, da.y.size, stride), desc="### Processing tiles by row"):
         for x_start in range(0, da.x.size, stride):
             # Ensure tiles start on the boundary and fit within the dataset
@@ -693,7 +697,7 @@ def tile_datacube_rxr(datacube_path, save_tiles_path, tile_size, stride, norm_fu
             try:
                 tile = da.isel(y=slice(y_start, y_end), x=slice(x_start, x_end))
             except KeyError:
-                print("---Error: tiling.")
+                logger.info("---Error: tiling.")
                 return
             
             num_tiles += 1   
@@ -701,12 +705,12 @@ def tile_datacube_rxr(datacube_path, save_tiles_path, tile_size, stride, norm_fu
 
                 # if has_pixels_outside_extent(tile):
                 #     num_px_outside_extent += 1
-                #     # print('---tile has pixels outside extent')
+                #     # logger.info('---tile has pixels outside extent')
                 #     continue
 
-                # PRINT TILE INFO
-                # print(f'\n---tile info for {x_start, y_start} ')
-                # print_dataarray_info(tile)
+                # logger.info TILE INFO
+                # logger.info(f'\n---tile info for {x_start, y_start} ')
+                # logger.info_dataarray_info(tile)
 
                 # REMOVE TILES THAT ARE PADDING
                 PAD_VAL = 255        # your padding value; set to whatever is used 
@@ -720,59 +724,60 @@ def tile_datacube_rxr(datacube_path, save_tiles_path, tile_size, stride, norm_fu
                     return np.all(mask == pad_val_mask)
 
                 if is_padding_tile_da(tile, PAD_VAL):
-                    # print(f'---tile {x_start, y_start} is padding, skipping')
+                    # logger.info(f'---tile {x_start, y_start} is padding, skipping')
                     num_novalid_pixels += 1
                     continue
                 # else:
-                #     print('---tile is not padding, continuing')
+                #     logger.info('---tile is not padding, continuing')
 
  
                 if has_no_mask_pixels(tile):
                     if num_nomask_pixels >= max_non_flooded:
-                        # print(f'---reached max nomaskpx, skipping tile\n')
+                        # logger.info(f'---reached max nomaskpx, skipping tile\n')
                         num_skip_nomask_px += 1  
                         continue
                     num_nomask_pixels +=1
-                    # print('---tile has no mask pixels')
-                    # print(f'---num_skip_nomask_pixels= {num_skip_nomask_px} of {max_non_flooded}') 
-                print(f'---tile = {x_start, y_start}')
-                print_dataarray_info(tile)
+                    # logger.info('---tile has no mask pixels')
+                    # logger.info(f'---num_skip_nomask_pixels= {num_skip_nomask_px} of {max_non_flooded}') 
+                logger.info(f'---tile = {x_start, y_start}')
+
+                # print_dataarray_info(tile)
 
             if int(tile.sizes["x"]) != tile_size or int(tile.sizes["y"]) != tile_size:
                 num_not_256 += 1
                 continue
 
-                # print("---odd shaped encountered; padding.")
+                # logger.info("---odd shaped encountered; padding.")
                 # padtile = pad_tile(tile, 250)
-                # print(f"---Tile dimensions b4 padding: {tile.sizes['x']}x{tile.sizes['y']}")
+                # logger.info(f"---Tile dimensions b4 padding: {tile.sizes['x']}x{tile.sizes['y']}")
                 # tile = pad_tile(tile, tile_size)
-                # print("---Tile coords:", tile.coords)
-                # print(f"---Tile dimensions after padding: {tile.sizes['x']}x{tile.sizes['y']}")
+                # logger.info("---Tile coords:", tile.coords)
+                # logger.info(f"---Tile dimensions after padding: {tile.sizes['x']}x{tile.sizes['y']}")
 
             if contains_nans(tile):
                 num_has_nans += 1
-                print('---tile has nans')
+                logger.info('---tile has nans')
                 continue
 
             # if has_no_valid_layer(tile):
             #     num_novalid_layer += 1
-            #     # print('---tile has no valid layer')
+            #     # logger.info('---tile has no valid layer')
             #     continue
             # if has_no_valid_pixels(tile):
             #     num_novalid_pixels += 1
-            #     # print('---tile has no valid pixels')
+            #     # logger.info('---tile has no valid pixels')
             #     continue
 
-            # print("---PRINTING DA INFO B4 NORM-----")
-            # print_dataarray_info(tile)
+            # logger.info("---logger.infoING DA INFO B4 NORM-----")
+            # logger.info_dataarray_info(tile)
             normalized = False
             # normalized_tile, normalized = normalize_inmemory_tile(tile)
-            # print('---norm_func= ', norm_func)  
+            # logger.info('---norm_func= ', norm_func)  
             if norm_func == 'logclipmm_g':
                 normalized_tile, normalized = log_clip_minmaxnorm(tile, global_min, global_max) 
         
             if not normalized:
-                print('---Failed to normalize tile')
+                logger.info('---Failed to normalize tile')
                 num_failed_norm += 1
                 continue
 
@@ -794,10 +799,10 @@ def tile_datacube_rxr(datacube_path, save_tiles_path, tile_size, stride, norm_fu
             })
 
             dest_path = save_tiles_path  / tile_name
-            print
+            logger.info
             if not dest_path.parent.exists():
                 os.makedirs(dest_path.parent, exist_ok=True)
-                print('---created dir= ', dest_path.parent)
+                logger.info(f'---created dir= {dest_path.parent}')
 
             ######### SAVE TILE ############
             # Save layer names as metadata
@@ -809,7 +814,7 @@ def tile_datacube_rxr(datacube_path, save_tiles_path, tile_size, stride, norm_fu
             transform = normalized_tile.rio.transform()
             tile_data = normalized_tile.values
             num_layers, height, width = tile_data.shape
-            # print('---layer_names= ', layer_names)
+            # logger.info('---layer_names= ', layer_names)
 
             with rasterio.open(dest_path, 'w',
                                 driver='GTiff',
@@ -833,27 +838,27 @@ def tile_datacube_rxr(datacube_path, save_tiles_path, tile_size, stride, norm_fu
                 metadata_path = save_tiles_path / "tile_metadata.json"
                 with open(metadata_path, "w") as f:
                     json.dump(tile_metadata, f, indent=4)
-                # print(f"---Saved metadata to {metadata_path}")
-            print(f'---num tiles={num_tiles}')
+                # logger.info(f"---Saved metadata to {metadata_path}")
+            logger.info(f'---num tiles={num_tiles}')
         #     if num_saved  == 5:
         #         break
         # if num_saved  == 5:
         #     break
 
     if inference:
-        print(f'---end of tiling datacube function')
+        logger.info(f'---end of tiling datacube function')
         return inference_tiles, tile_metadata            
 
 
-    print('--- num_tiles= ', num_tiles)
-    print('---num_saved= ', num_saved)  
-    print('---num_has_nans= ', num_has_nans)
-    print('---num_novalid_layer= ', num_novalid_layer)
-    print('---num_novalid_pixels= ', num_novalid_pixels)
-    print('---num_nomask pixels= ', num_nomask_pixels)
-    print('---num_skip_nomask_pixels= ', num_skip_nomask_px)
-    print('---num_failed_norm= ', num_failed_norm)
-    print('---num_px_outside_extent= ', num_px_outside_extent)
+    logger.info(f'--- num_tiles= { num_tiles}')
+    logger.info(f'---num_saved= { num_saved}')  
+    logger.info(f'---num_has_nans= { num_has_nans}')
+    logger.info(f'---num_novalid_layer= { num_novalid_layer}')
+    logger.info(f'---num_novalid_pixels= { num_novalid_pixels}')
+    logger.info(f'---num_nomask pixels= { num_nomask_pixels}')
+    logger.info(f'---num_skip_nomask_pixels= { num_skip_nomask_px}')
+    logger.info(f'---num_failed_norm= { num_failed_norm}')
+    logger.info(f'---num_px_outside_extent= { num_px_outside_extent}')
     return num_tiles, num_saved, num_has_nans, num_novalid_layer, num_novalid_pixels, num_nomask_pixels, num_skip_nomask_px, num_failed_norm, num_not_256, num_px_outside_extent
 
 # COMPARE THIS TO THE ABOVE FUNCTION - SHOULD ONLY NEED ONE, WITH CONDITIONS
@@ -866,12 +871,12 @@ def tile_datacube_rxr_inf(datacube_path, save_tiles_path, tile_size, stride, nor
     TODO add date etc to saved tile name?
     TODO add json file with metadata for each tile inv mask and anal_ext pixel count etc
     """
-    print('+++++++in tile_datacube rxr fn ++++++++')
+    logger.info('+++++++in tile_datacube rxr fn ++++++++')
     global_min, global_max = stats
-    print('---FILE global_min= ', global_min)
-    print('---FILE global_max= ', global_max)
+    logger.info(f'---FILE global_min= { global_min}')
+    logger.info(f'---FILE global_max= { global_max}')
     if stride != tile_size:
-        print(f'--stride = {stride}')
+        logger.info(f'--stride = {stride}')
     num_tiles = 0
     num_saved = 0
     num_has_nans = 0
@@ -888,20 +893,20 @@ def tile_datacube_rxr_inf(datacube_path, save_tiles_path, tile_size, stride, nor
     var = list(ds.data_vars)[0]
     da = ds[var]
 
-    # print('---DS VARS BEFORE TILING = ', list(ds.data_vars))
+    # logger.info('---DS VARS BEFORE TILING = ', list(ds.data_vars))
 
-    # print_dataarray_info(da)
+    # logger.info_dataarray_info(da)
     if da.chunks:
         for dim, chunk in zip(da.dims, da.chunks):
-            print(f"---Dimension '{dim}' has chunk sizes: {chunk}")
+            logger.info(f"---Dimension '{dim}' has chunk sizes: {chunk}")
     tile_metadata = []
     inference_tiles = []
 
     # estimate number of tiles that will be made
     total_tiles = (da.x.size // stride) * (da.y.size // stride)
-    max_non_flooded = total_tiles * (percent_non_flood / 100)
+    max_non_flooded = total_tiles * percent_non_flood
 
-    print('-----START TILING----------------')
+    logger.info('-----START TILING----------------')
     for y_start in tqdm(range(0, da.y.size, stride), desc="### Processing tiles by row"):
         for x_start in range(0, da.x.size, stride):
 
@@ -913,7 +918,7 @@ def tile_datacube_rxr_inf(datacube_path, save_tiles_path, tile_size, stride, nor
             try:
                 tile = da.isel(y=slice(y_start, y_end), x=slice(x_start, x_end))
             except KeyError:
-                print("---Error: tiling.")
+                logger.info("---Error: tiling.")
                 return
             
             num_tiles += 1   
@@ -921,54 +926,54 @@ def tile_datacube_rxr_inf(datacube_path, save_tiles_path, tile_size, stride, nor
             if not inference:
                 if has_pixels_outside_extent(tile):
                     num_px_outside_extent += 1
-                    # print('---tile has pixels outside extent')
+                    # logger.info('---tile has pixels outside extent')
                     continue
 
                 if has_no_mask_pixels(tile):
-                    # print(f'---max_non_flooded= {max_non_flooded}')
+                    # logger.info(f'---max_non_flooded= {max_non_flooded}')
                     if num_nomask_pixels > max_non_flooded:
-                        print(f'---reached max nomaskpx, skipping tile')
+                        logger.info(f'---reached max nomaskpx, skipping tile')
                         num_skip_nomask_px += 1  
                         continue
                     num_nomask_pixels +=1
-                    # print('---tile has no mask pixels')
-                    # print(f'---num_skip_nomask_pixels= {num_skip_nomask_px} of {max_non_flooded}') 
+                    # logger.info('---tile has no mask pixels')
+                    # logger.info(f'---num_skip_nomask_pixels= {num_skip_nomask_px} of {max_non_flooded}') 
                 
             if int(tile.sizes["x"]) != tile_size or int(tile.sizes["y"]) != tile_size:
                 num_not_256 += 1
                 continue
 
-                # print("---odd shaped encountered; padding.")
+                # logger.info("---odd shaped encountered; padding.")
                 # padtile = pad_tile(tile, 250)
-                # print(f"---Tile dimensions b4 padding: {tile.sizes['x']}x{tile.sizes['y']}")
+                # logger.info(f"---Tile dimensions b4 padding: {tile.sizes['x']}x{tile.sizes['y']}")
                 # tile = pad_tile(tile, tile_size)
-                # print("---Tile coords:", tile.coords)
-                # print(f"---Tile dimensions after padding: {tile.sizes['x']}x{tile.sizes['y']}")
+                # logger.info("---Tile coords:", tile.coords)
+                # logger.info(f"---Tile dimensions after padding: {tile.sizes['x']}x{tile.sizes['y']}")
 
             if contains_nans(tile):
                 num_has_nans += 1
-                print('---tile has nans')
+                logger.info('---tile has nans')
                 continue
 
             # if has_no_valid_layer(tile):
             #     num_novalid_layer += 1
-            #     # print('---tile has no valid layer')
+            #     # logger.info('---tile has no valid layer')
             #     continue
             # if has_no_valid_pixels(tile):
             #     num_novalid_pixels += 1
-            #     # print('---tile has no valid pixels')
+            #     # logger.info('---tile has no valid pixels')
             #     continue
 
-            # print("---PRINTING DA INFO B4 NORM-----")
-            # print_dataarray_info(tile)
+            # logger.info("---logger.infoING DA INFO B4 NORM-----")
+            # logger.info_dataarray_info(tile)
             normalized = False
             # normalized_tile, normalized = normalize_inmemory_tile(tile)
-            # print('---norm_func= ', norm_func)  
+            # logger.info('---norm_func= ', norm_func)  
             if norm_func == 'logclipmm_g':
                 normalized_tile, normalized = log_clip_minmaxnorm(tile, global_min, global_max) 
         
             if not normalized:
-                print('---Failed to normalize tile')
+                logger.info('---Failed to normalize tile')
                 num_failed_norm += 1
                 continue
 
@@ -993,10 +998,10 @@ def tile_datacube_rxr_inf(datacube_path, save_tiles_path, tile_size, stride, nor
             })
 
             dest_path = save_tiles_path  / tile_name
-            print
+            logger.info
             if not dest_path.parent.exists():
                 os.makedirs(dest_path.parent, exist_ok=True)
-                print('---created dir= ', dest_path.parent)
+                logger.info('---created dir= ', dest_path.parent)
 
             ######### SAVE TILE ############
             # Save layer names as metadata
@@ -1008,7 +1013,7 @@ def tile_datacube_rxr_inf(datacube_path, save_tiles_path, tile_size, stride, nor
             transform = normalized_tile.rio.transform()
             tile_data = normalized_tile.values
             num_layers, height, width = tile_data.shape
-            # print('---layer_names= ', layer_names)
+            # logger.info('---layer_names= ', layer_names)
 
             with rasterio.open(dest_path, 'w',
                                 driver='GTiff',
@@ -1031,25 +1036,25 @@ def tile_datacube_rxr_inf(datacube_path, save_tiles_path, tile_size, stride, nor
                 metadata_path = save_tiles_path / "tile_metadata.json"
                 with open(metadata_path, "w") as f:
                     json.dump(tile_metadata, f, indent=4)
-                # print(f"---Saved metadata to {metadata_path}")
+                # logger.info(f"---Saved metadata to {metadata_path}")
 
     if inference:
-        print(f'---end of tiling datacube function')
+        logger.info(f'---end of tiling datacube function')
         return inference_tiles, tile_metadata            
 
         #     if num_saved  == 100:
         #         break
         # if num_saved  == 100:
         #     break
-    print('--- num_tiles= ', num_tiles)
-    print('---num_saved= ', num_saved)  
-    print('---num_has_nans= ', num_has_nans)
-    print('---num_novalid_layer= ', num_novalid_layer)
-    print('---num_novalid_pixels= ', num_novalid_pixels)
-    print('---num_nomask pixels= ', num_nomask_pixels)
-    print('---num_skip_nomask_pixels= ', num_skip_nomask_px)
-    print('---num_failed_norm= ', num_failed_norm)
-    print('---num_px_outside_extent= ', num_px_outside_extent)
+    logger.info(f'--- num_tiles= { num_tiles}')
+    logger.info(f'---num_saved= { num_saved}')  
+    logger.info(f'---num_has_nans= { num_has_nans}')
+    logger.info(f'---num_novalid_layer= { num_novalid_layer}')
+    logger.info(f'---num_novalid_pixels= { num_novalid_pixels}')
+    logger.info(f'---num_nomask pixels= { num_nomask_pixels}')
+    logger.info(f'---num_skip_nomask_pixels= { num_skip_nomask_px}')
+    logger.info(f'---num_failed_norm= { num_failed_norm}')
+    logger.info(f'---num_px_outside_extent= { num_px_outside_extent}')
     return num_tiles, num_saved, num_has_nans, num_novalid_layer, num_novalid_pixels, num_nomask_pixels, num_skip_nomask_px, num_failed_norm, num_not_256, num_px_outside_extent
 
 def tile_datacube_rasterio(datacube_path, save_tiles_path, tile_size=256, stride=256):
@@ -1061,7 +1066,7 @@ def tile_datacube_rasterio(datacube_path, save_tiles_path, tile_size=256, stride
     TODO add date etc to saved tile name?
     TODO add json file with metadata for each tile inv mask and anal_ext pixel count etc
     """
-    print('\n+++++++in tile_datacube fn ++++++++')
+    logger.info('\n+++++++in tile_datacube fn ++++++++')
 
     # datacube = rxr.open_rasterio(datacube_path, variable='data1') # OPENS A DATAARRAY
 
@@ -1069,26 +1074,26 @@ def tile_datacube_rasterio(datacube_path, save_tiles_path, tile_size=256, stride
     datacube = xr.open_dataset(datacube_path) # OPENS A DATASET
     datacube = datacube['data1']
 
-    print('==============================')
-    print('---opened datacube= ', datacube)
-    print('==============================')
+    logger.info('==============================')
+    logger.info(f'---opened datacube= {datacube}')
+    logger.info('==============================')
     # check if datacube is a dataarray or dataset
     if isinstance(datacube, xr.Dataset):
-        print('---datacube is a dataset')
+        logger.info('---datacube is a dataset')
     else:
-        print('---datacube is a dataarray')
+        logger.info('---datacube is a dataarray')
         # datacube = datacube.to_array(dim='layer', name='data1')
 
-    print("---Raw Datacube Check----------------")
+    logger.info("---Raw Datacube Check----------------")
     layer_names = []
     for l in datacube.coords["layer"].values:
         layer_names.append(str(l))
 
-    print('---layers= ', layer_names)
+    logger.info(f'---layers=  {layer_names}')
 
-    # print('---opened datacube crs1 = ', datacube.rio.crs)
+    # logger.info('---opened datacube crs1 = ', datacube.rio.crs)
     datacube.rio.write_crs("EPSG:4326", inplace=True)
-    # print('---opened datacube crs2 = ', datacube.rio.crs)
+    # logger.info('---opened datacube crs2 = ', datacube.rio.crs)
 
 
 
@@ -1103,8 +1108,8 @@ def tile_datacube_rasterio(datacube_path, save_tiles_path, tile_size=256, stride
 
 
     with rasterio.open(datacube_path) as src:
-        # print src dtype
-        print('---src dtype:', src.dtype)
+        # logger.info src dtype
+        logger.info(f'---src dtype:{ src.dtype}')
 
 
         for y_start in tqdm(range(0, src.height, stride), desc="### Processing tiles by row"):
@@ -1119,18 +1124,18 @@ def tile_datacube_rasterio(datacube_path, save_tiles_path, tile_size=256, stride
                 width = x_end - x_start
                 height = y_end - y_start
                 window = Window(x_start, y_start, width, height)
-                print('---window= ', window)
+                logger.info('---window= ', window)
 
                 # Read the data for this tile
                 tile_data = src.read(window=window)
                 num_tiles += 1
-                # print('---*****num_tiles*************= ', num_tiles)
+                # logger.info('---*****num_tiles*************= ', num_tiles)
 
                 if  num_tiles % 250 == 0:
-                    print(f"Counted { num_tiles} tiles")
+                    logger.info(f"Counted { num_tiles} tiles")
 
                 #   FILTER OUT TILES WITH NO DATA
-                # print('---filtering out bad tiles')
+                # logger.info('---filtering out bad tiles')
 
                 
 
@@ -1139,23 +1144,23 @@ def tile_datacube_rasterio(datacube_path, save_tiles_path, tile_size=256, stride
 
                 if contains_nans(src):
                     num_has_nans += 1
-                    # print('---src has nans')
+                    # logger.info('---src has nans')
                     continue
                 if has_no_valid_layer(src):
                     num_novalid_layer += 1
-                    # print('---src has no valid layer')
+                    # logger.info('---src has no valid layer')
                     continue
                 if has_no_valid_pixels(src):
                     num_novalid_pixels += 1
-                    # print('---src has no valid pixels')
+                    # logger.info('---src has no valid pixels')
                     continue
                 if has_no_mask(src):
                     num_nomask +=1
-                    # print('---src has no mask')
+                    # logger.info('---src has no mask')
                     continue
                 if has_no_mask_pixels(src):
                     num_nomask_pixels +=1
-                    # print('---src has no mask pixels')
+                    # logger.info('---src has no mask pixels')
                     continue
                 # Save the tile as GeoTIFF
                 tile_path = save_tiles_path / f"tile_{y_start}_{x_start}.tif"
@@ -1171,7 +1176,7 @@ def tile_datacube_rasterio(datacube_path, save_tiles_path, tile_size=256, stride
                     transform=rasterio.windows.transform(window, src.transform),
                 ) as dst:
                     # FILTER OUT TILES WITH NO DATA
-                    print('---filtering out bad tiles')
+                    logger.info('---filtering out bad tiles')
 
 
                     for i in range(1, src.count + 1):
@@ -1179,45 +1184,45 @@ def tile_datacube_rasterio(datacube_path, save_tiles_path, tile_size=256, stride
                         dst.set_band_description(i, layer_names[i-1])  # Add band descriptions
                     
                     # Normalize the tile
-                    # print('---normalizing tile')
+                    # logger.info('---normalizing tile')
                     dst = normalize_inmemory_tile(dst)
 
-                print("Tiling complete.")
+                logger.info("Tiling complete.")
 
-                # print('vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv')
-                # print('---TILE= ', tile)
-                # print('^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^')
+                # logger.info('vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv')
+                # logger.info('---TILE= ', tile)
+                # logger.info('^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^')
 
 
                 num_saved += 1
 
             # OPEN SAVED TILE AND CHECK VALUES IN LAYERS
-            print('-----------------------------')
-            print('---SAVED TILE CHECK-------')
+            logger.info('-----------------------------')
+            logger.info('---SAVED TILE CHECK-------')
 
             # saved_tile = rxr.open_rasterio(dest_path)
-            # print('---saved_tile= ', saved_tile)
+            # logger.info('---saved_tile= ', saved_tile)
             # for i in saved_tile.coords["band"].values:
             #     # Select the second band (e.g., band 2)
             #     # Find unique values
             #     vals = np.unique(saved_tile.sel(band=i))
-            #     print(f"{i}: num Unique values: {len(vals)}")
+            #     logger.info(f"{i}: num Unique values: {len(vals)}")
 
             with rasterio.open(tile_path) as src:
-                print('---src:', src.count)
+                logger.info('---src:', src.count)
                 for i in range(1, src.count + 1):
                     band_name = src.descriptions[i - 1].lower()
-                    print('---bandname ',band_name)
+                    logger.info('---bandname ',band_name)
                     return
-            print('-----------------------------')
+            logger.info('-----------------------------')
 
-    # print('--- num_tiles= ', num_tiles)
-    # print('---num_saved= ', num_saved)  
-    # print('---num_has_nans= ', num_has_nans)
-    # print('---num_novalid_layer= ', num_novalid_layer)
-    # print('---num_novalid_pixels= ', num_novalid_pixels)
-    # print('---num_nomask= ', num_nomask)
-    # print('---num_nomask_pixels= ', num_nomask_pixels)
+    # logger.info('--- num_tiles= ', num_tiles)
+    # logger.info('---num_saved= ', num_saved)  
+    # logger.info('---num_has_nans= ', num_has_nans)
+    # logger.info('---num_novalid_layer= ', num_novalid_layer)
+    # logger.info('---num_novalid_pixels= ', num_novalid_pixels)
+    # logger.info('---num_nomask= ', num_nomask)
+    # logger.info('---num_nomask_pixels= ', num_nomask_pixels)
     return num_tiles, num_saved, num_has_nans, num_novalid_layer, num_novalid_pixels, num_nomask, num_nomask_pixels
 
 # DATAARAY TO *DA* TILE CHECKS
@@ -1233,7 +1238,7 @@ def contains_nans(tile):
         # Calculate the number of NaNs in the current band
         nan_count = np.isnan(tile.sel(layer=band)).sum().values
         if nan_count > 0:
-            print(f"Tile contains {nan_count} NaN values in {band}")
+            logger.info(f"Tile contains {nan_count} NaN values in {band}")
             contains_nan = True
     return contains_nan  # True if any NaNs were found, False if none
 
@@ -1259,15 +1264,15 @@ def has_no_valid_layer(tile):
     return False = ok
     '''
     # Ensure 'valid' layer exists
-    # print("---Warning: 'valid' layer not found in tile.")
+    # logger.info("---Warning: 'valid' layer not found in tile.")
     return 'valid' not in tile.coords['layer'].values  # If valid data is found, return False
         
 def has_no_valid_pixels(tile, ):
-    #print("Values in 'valid' layer for tile:", tile.sel(layer='valid').values)
+    #logger.info("Values in 'valid' layer for tile:", tile.sel(layer='valid').values)
     return 1 not in tile.sel(layer='valid').values  # If valid data is found, return False
 
 def has_pixels_outside_extent(tile, ):
-    #print("Values in 'valid' layer for tile:", tile.sel(layer='valid').values)
+    #logger.info("Values in 'valid' layer for tile:", tile.sel(layer='valid').values)
     if 'extent' in tile.coords['layer'].values:
         return 0 in tile.sel(layer='extent').values
     return 0 in tile.sel(layer='extent').values  # If valid data is found, return False
@@ -1311,7 +1316,7 @@ def has_no_mask_pixels(da, atol=1e-6):
 
 def is_not_256(data):
     if data.shape[0] != 256 or data.shape[1] != 256:
-        # print('---padding')
+        # logger.info('---padding')
         # pad_width = 256 - data.shape[1]
         # pad_height = 256 - data.shape[0]
         # data = np.pad(data, ((0, pad_height), (0, pad_width)), mode='reflect')
@@ -1328,8 +1333,8 @@ def check_novalues(path_to_tiff):
 
         # Check unique pixel values
         unique_values, counts = np.unique(band1, return_counts=True)
-        print("Unique pixel values:", unique_values)
-        print("Counts of each value:", counts)
+        logger.info("Unique pixel values:", unique_values)
+        logger.info("Counts of each value:", counts)
 
 def remove_nodata_from_tiff(input_tiff, output_tiff):
     """Remove the NoData flag from a TIFF, ensuring all pixel values are valid."""
@@ -1339,10 +1344,10 @@ def remove_nodata_from_tiff(input_tiff, output_tiff):
         
         # Remove the NoData value from the profile
         if profile.get('nodata') is not None:
-            print(f"Original NoData value: {profile['nodata']}")
+            logger.info(f"Original NoData value: {profile['nodata']}")
             profile['nodata'] = None
         else:
-            print("No NoData value set.")
+            logger.info("No NoData value set.")
         
         # Create a new TIFF without NoData
         with rasterio.open(output_tiff, 'w', **profile) as dst:
@@ -1350,7 +1355,7 @@ def remove_nodata_from_tiff(input_tiff, output_tiff):
                 data = src.read(i)
                 dst.write(data, i)
         
-    print(f"Saved new TIFF without NoData to {output_tiff}")
+    logger.info(f"Saved new TIFF without NoData to {output_tiff}")
 
 # UTILITIES
 
@@ -1450,12 +1455,12 @@ def compress_geotiff_rasterio(input_tile_path, output_tile_path, compression="lz
 def find_data_folders(base_path):
     """Recursively search  to find 'train', 'val', and 'test' folders.
     create lists of paths to each folder type."""
-    print('+++in find_data_folders')
+    logger.info('+++in find_data_folders')
     data_folders = {'train': [], 'val': [], 'test': []}
     for root, dirs, _ in os.walk(base_path):
-        # print('---root = ', root)
+        # logger.info('---root = ', root)
         for d in dirs:
             if d in data_folders:
                 data_folders[d].append(Path(root) / d)
-    # print('---data_folders = ', data_folders)
+    # logger.info('---data_folders = ', data_folders)
     return data_folders
