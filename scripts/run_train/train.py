@@ -7,6 +7,7 @@ import wandb
 import random 
 import numpy as np
 import os.path as osp
+import logging
 from pathlib import Path 
 from dotenv import load_dotenv  
 import sys
@@ -43,14 +44,21 @@ from datetime import datetime
 # .............................................................
 
 from scripts.process.process_helpers import handle_interrupt
-from scripts.train_modules.train_helpers import is_sweep_run
-from scripts.train_modules.train_classes import  UnetModel,   Segmentation_training_loop 
-from scripts.train_modules.train_functions import  loss_chooser, wandb_initialization, job_type_selector, create_subset
+from scripts.train.train_helpers import is_sweep_run
+from scripts.train.train_classes import  UnetModel,   Segmentation_training_loop 
+from scripts.train.train_functions import  loss_chooser, wandb_initialization, job_type_selector, create_subset
+
+logging.basicConfig(
+    level=logging.INFO,                            # DEBUG, INFO,[ WARNING,] ERROR, CRITICAL
+    format=" %(levelname)-8s %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S")
+
+logger = logging.getLogger(__name__)
 
 #.............................................................
 # PATHS DEFINITIONS ANd CONSTANTS
 repo_root = Path(__file__).resolve().parents[2]
-# print(f"repo root: {repo_root}")
+# logger.debug(f"repo root: {repo_root}")
 
 os.environ['KMP_DUPLICATE_LIB_OK'] = "True"
 
@@ -62,7 +70,7 @@ def pick_device() -> torch.device:
     return torch.device("cpu")
 
 def handle_interrupt(signum, frame):
-    print("\n---Custom signal handler: SIGINT received. Exiting.")
+    logger.debug("\n---Custom signal handler: SIGINT received. Exiting.")
     sys.exit(0)
 # Register signal handler for SIGINT (Ctrl+C)
 signal.signal(signal.SIGINT, handle_interrupt)
@@ -76,13 +84,13 @@ def main(train, test):
     CONDA ENVIRONMENT = 'floodai_train'
     """
     device = pick_device()                       # used everywhere below
-    print(f">>> Using device: {device}")
+    logger.debug(f">>> Using device: {device}")
 
     env_file = repo_root / ".env"
     if env_file.exists():
         load_dotenv(env_file)
     else:
-        print(">>>Warning: .env not found; using shell environment")
+        logger.debug(">>>Warning: .env not found; using shell environment")
 
 
     if test and train:
@@ -91,8 +99,8 @@ def main(train, test):
 
     if  test:
         train = False
-        print('>>> ARE YOU TESTING THE CORRECT CKPT? <<<')
-    print(f"train={train}, test={test}")
+        logger.debug('>>> ARE YOU TESTING THE CORRECT CKPT? <<<')
+    logger.debug(f"train={train}, test={test}")
 
     job_type = "train" if train else "test"
 
@@ -131,11 +139,11 @@ def main(train, test):
     # Dataset Setup
     input_folders = [i for i in dataset_path.iterdir() if i.is_dir() and not i.name.startswith(".")]
  
-    print(f">>>Input folders: {input_folders}")
+    logger.debug(f">>>Input folders: {input_folders}")
     assert len(input_folders) == 1
     dataset_name = input_folders[0].name
     dataset_path = dataset_path / dataset_name
-    print(f">>>Dataset: {dataset_path}")
+    logger.debug(f">>>Dataset: {dataset_path}")
 
     if user_loss != 'focal':
         focal_alpha = None
@@ -167,10 +175,10 @@ def main(train, test):
 
     config = wandb.config
 
-    print(f"---Current config: {wandb.config}")
+    logger.debug(f"---Current config: {wandb.config}")
     if user_loss == "focal":
-        print(f"---focal_alpha: {wandb.config.get('focal_alpha', 'Not Found')}")
-        print(f"---focal_gamma: {wandb.config.get('focal_gamma', 'Not Found')}")
+        logger.debug(f"---focal_alpha: {wandb.config.get('focal_alpha', 'Not Found')}")
+        logger.debug(f"---focal_gamma: {wandb.config.get('focal_gamma', 'Not Found')}")
         loss_desc = f"{user_loss}_{config.focal_alpha}_{config.focal_gamma}" 
     elif user_loss == "bce_dice":
         loss_desc = f"{user_loss}_{config.bce_weight}"
@@ -182,14 +190,14 @@ def main(train, test):
 
     wandb.run.name = run_name
     # wandb.run.save()
-    print(f"---config.name: {config.name}")
+    logger.debug(f"---config.name: {config.name}")
 
     if is_sweep_run():
-        print(">>> IN SWEEP MODE <<<")
+        logger.debug(">>> IN SWEEP MODE <<<")
     
     persistent_workers = num_workers > 0
     if job_type == "train":
-        print(">>> Creating data loaders")
+        logger.debug(">>> Creating data loaders")
         train_dl = create_subset(train_list, dataset_path, 'train', subset_fraction, inputs, bs, num_workers, persistent_workers)
         val_dl = create_subset(val_list, dataset_path, 'val', subset_fraction, inputs, bs, num_workers, persistent_workers)
 
@@ -260,11 +268,11 @@ def main(train, test):
 
     # Training or Testing
     if train:
-        print(">>> Starting training")
+        logger.debug(">>> Starting training")
         training_loop = Segmentation_training_loop(model, loss_fn, save_path, user_loss)
         trainer.fit(training_loop, train_dataloaders=train_dl, val_dataloaders=val_dl)
     elif test:
-        print(f">>> Starting testing with checkpoint: {ckpt_to_test}")
+        logger.debug(f">>> Starting testing with checkpoint: {ckpt_to_test}")
         training_loop = Segmentation_training_loop.load_from_checkpoint(
             ckpt_to_test, model=model, loss_fn=loss_fn, save_path=save_path
         )
@@ -272,7 +280,7 @@ def main(train, test):
 
     # Cleanup
     run_time = (time.time() - start) / 60
-    print(f">>> Total runtime: {run_time:.2f} minutes")
+    logger.debug(f">>> Total runtime: {run_time:.2f} minutes")
     wandb.finish()
     if device.type == "cuda":
         torch.cuda.empty_cache()

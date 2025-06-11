@@ -15,12 +15,12 @@ from torch import Tensor, einsum
 # from typing import Tuple, Callable, List, TypeVar, Any
 
 import segmentation_models_pytorch as smp
-from scripts.train_modules.train_helpers import nsd
+from scripts.train.train_helpers import nsd
 
 # from sklearn.metrics import precision_recall_curve, auc, f1_score
 
 def create_subset(file_list, event, stage,  subset_fraction , inputs, bs, num_workers, persistent_workers):
-    from scripts.train_modules.train_classes import FloodDataset
+    from scripts.train.train_classes import FloodDataset
     dataset = FloodDataset(file_list, event, stage=stage, inputs=inputs)    
     subset_indices = random.sample(range(len(dataset)), int(subset_fraction * len(dataset)))
     subset = Subset(dataset, subset_indices)

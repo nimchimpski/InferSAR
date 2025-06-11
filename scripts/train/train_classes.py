@@ -30,8 +30,8 @@ import numpy as np
 import wandb
 import io
 import random
-from scripts.train_modules.train_helpers import is_sweep_run
-from scripts.train_modules.train_functions import plot_auc_pr 
+from scripts.train.train_helpers import is_sweep_run
+from scripts.train.train_functions import plot_auc_pr 
 
 
 
