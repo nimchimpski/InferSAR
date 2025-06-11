@@ -6,6 +6,7 @@ def combine_txt_files(txt_file1, txt_file2, output_file):
     """
     Combine two .txt files into one, removing duplicates if necessary.
     """
+    print('+++in combine_txt_files+++')
     # Read entries from both files
     with open(txt_file1, "r") as f1, open(txt_file2, "r") as f2:
         entries1 = f1.readlines()
@@ -23,6 +24,8 @@ def combine_datasets(dataset1_path, dataset2_path, output_path):
     Combine train/val/test splits and their corresponding .txt files,
     ensuring the original files are preserved.
     """
+    print('+++in combine_datasets+++')
+    print(f"Combining datasets from {dataset1_path} and {dataset2_path} into {output_path}")
     splits = ["train", "val", "test"]
     
     for split in splits:
@@ -66,8 +69,8 @@ def combine_datasets(dataset1_path, dataset2_path, output_path):
 
 def main():
     ##################################
-    combine_folder = Path(r"C:\Users\floodai\UNOSAT_FloodAI_v2\1data\3final\to_combine_###")
-    output_path = Path(r"C:\Users\floodai\UNOSAT_FloodAI_v2\1data\3final\train_input_###")
+    combine_folder = Path("/Users/alexwebb/laptop_coding/floodai/UNOSAT_FloodAI_v2/data/4final/to_combine")
+    output_path = Path("/Users/alexwebb/laptop_coding/floodai/UNOSAT_FloodAI_v2/data/4final/train_input")
     if not (combine_folder.exists()) or not (combine_folder.is_dir()):
         print(f" folder {combine_folder} does not exist.")
         return
@@ -75,7 +78,7 @@ def main():
 
     # get folders in the combine folder
     combine_folders = [f for f in combine_folder.iterdir() if f.is_dir()]
-    print(f"Combine folders: {combine_folders}")
+    print(f"---Combine folders: {combine_folders}")
 
     combine_datasets(
     dataset1_path = combine_folders[0] ,
