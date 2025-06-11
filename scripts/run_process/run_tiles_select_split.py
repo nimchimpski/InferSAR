@@ -18,7 +18,7 @@ def main(test=None):
 
     repo_dir = Path(__file__).resolve().parent.parent.parent
     print(f'>>>repo_dir= {repo_dir}')
-    src_base = repo_dir / 'data' / '2interim' / 'TSX_tiles' / 'NORM_TILES_FOR_SELECT_AND_SPLIT_INPUT'
+    src_base = repo_dir / 'data' / '3processed' / 'sar_tiles' / 'NORM_TILES_FOR_SELECT_AND_SPLIT_INPUT'
     dataset_name = None
     ############################################
     MAKEFOLDER = True
@@ -35,9 +35,9 @@ def main(test=None):
     print(f"Destination folder: {dst_base}")
   
 
-    train_ratio=0.829999
-    val_ratio=0.17
-    test_ratio=0.000001
+    train_ratio=0.7
+    val_ratio=0.15
+    test_ratio=0.15
     if test:
         train_ratio=0.001
         val_ratio=0.001
@@ -57,28 +57,19 @@ def main(test=None):
     # print(f'>>>folder_to_process= {folder_to_process.name}')
     if len(folders_to_process) == 0:
         print(">>>No event folder found.")
-        return
+        
     elif len(folders_to_process) > 1:
         print(">>>Multiple event folders found.")
-        return
-    else:
-        src_tiles = folders_to_process[0]
-        print(f'>>>src_tiles_name= {src_tiles.name}')
+        
+    # else:
+    #     src_tiles = folders_to_process[0]
+    #     print(f'>>>src_tiles_name= {src_tiles.name}')
+    
     # parts = src_tiles.name.split('_')[:3]
     # print(f'>>>newname= {parts}')
     # newname = '_'.join(parts)
     # print(f'>>>newname= {newname}')
-    dest_dir = get_incremental_filename(dst_base, f'{src_tiles.name}_mt{mask_threshold}_pcu{percent_under_thresh}')
 
-    print(f'>>>source dir = {src_base}')
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    print(f'>>>dest dir: {dest_dir}')   
-    if not dest_dir.exists():
-        print(f"Failed to create {dest_dir}")
-        return
-    print('>>>mask threshold:', mask_threshold)
-    print('>>>analysis threshold:', analysis_threshold)
-    make_train_folders(dest_dir)
 
     #GET ALL NORMALIZED FOLDERS
     recursive_list = list(src_base.rglob('*normalized*'))
@@ -90,6 +81,18 @@ def main(test=None):
     # FILTER AND SPLIT
     for folder in  tqdm(recursive_list, desc="TOTAL FOLDERS"):
         # GET NUMBER OF FILES IN FOLDER
+
+        dest_dir = get_incremental_filename(dst_base, f'{folder.name}_mt{mask_threshold}_pcu{percent_under_thresh}')
+
+        print(f'>>>source dir = {src_base}')
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        print(f'>>>dest dir: {dest_dir}')   
+        if not dest_dir.exists():
+            print(f"Failed to create {dest_dir}")
+            return
+        print('>>>mask threshold:', mask_threshold)
+        print('>>>analysis threshold:', analysis_threshold)
+        make_train_folders(dest_dir)
 
         print(f"\n>>>>>>>>>>>>>>>>>>> AT FOLDER {folder.name}>>>>>>>>>>>>>>>")
         foldertotal, folder_selected, folderrejected, folder_missing_extent, folder_missing_mask, folder_under_thresh = select_tiles_and_split(folder, dest_dir, train_ratio, val_ratio, test_ratio, analysis_threshold, mask_threshold, percent_under_thresh, MAKEFOLDER)
