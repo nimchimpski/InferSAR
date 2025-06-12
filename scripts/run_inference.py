@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 import click
 import yaml
 import gc
+import logging
 from rasterio.plot import show
 from rasterio.windows import Window
 from rasterio.warp import calculate_default_transform, reproject, Resampling
@@ -23,6 +24,13 @@ from collections import OrderedDict
 from skimage.morphology import binary_erosion
 
 start=time.time()
+
+logging.basicConfig(
+    level=logging.INFO,                            # DEBUG, INFO,[ WARNING,] ERROR, CRITICAL
+    format=" %(levelname)-8s %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S")
+
+logger = logging.getLogger(__name__)
 
 def create_weight_matrix(tile_size, overlap_size):
     """Generate a weight matrix using cosine decay for blending."""
@@ -228,6 +236,7 @@ def clean_checkpoint_keys(state_dict):
 
 @click.command()
 @click.option('--test', is_flag=True, help='loading from test folder', show_default=False)
+
 def main(test=False):
 
     # import matplotlib.pyplot as plt
@@ -235,52 +244,64 @@ def main(test=False):
     # plt.imshow(wm, cmap="viridis")
     # plt.colorbar()
     # plt.show()
-
     print(f'>>>test mode = {test}')
-    # READ CONFIG
-    config_path = Path(r"C:\Users\floodai\UNOSAT_FloodAI_v2\2configs\floodaiv2_config.yaml")
-    with open(config_path, "r") as file:
-        config = yaml.safe_load(file)
 
-    threshold = config["threshold"] # PREDICTION CONFIDENCE THRESHOLD
-    tile_size = config["tile_size"] # TILE SIZE FOR INFERENCE
-    # Normalize all paths in the config
-    input_file = Path(config['input_file'])
-    output_folder = Path(config['output_folder'])
-    output_filename = Path(config['output_filename'])
-    analysis_extent = Path(config['analysis_extent'])
 
-    # print(f'>>> config = {config}')
-    print(f'>>>threshold: {threshold}') 
-    print(f'>>>tile_size: {tile_size}')
-    print(f'>>>output_folder= {output_folder}')
-    print(f'>>>output_filename= {output_filename}')
-    print(f'>>>alalysis_extent= {analysis_extent}')
-    
-    ############################################################################
-    # DEFINE PATHS
-
-    # DEFINE THE WORKING FOLDER FOR I/O
-    img_src = Path(r"C:\Users\floodai\UNOSAT_FloodAI_v2\1data\4final\predict_input")
-    # print(f'>>>working folder: {img_src}')
-    if path_not_exists(img_src):
-        print(f"---No input folder found in {img_src}")
-        return
-    
-    minmax_path = Path(r"C:\Users\floodai\UNOSAT_FloodAI_v2\2configs\global_minmax_INPUT\global_minmax.json")
-    if path_not_exists(minmax_path):
-        return
-
-    ckpt_path = Path(r"C:\Users\floodai\UNOSAT_FloodAI_v2\5checkpoints\ckpt_INPUT")
-
+    # VARIABLES................................................................
     norm_func = 'logclipmm_g' # 'mm' or 'logclipmm'
     stats = None
     MAKE_TIFS = False
     MAKE_DATAARRAY= False
     stride = tile_size
+    ############################################################################
+    # DEFINE PATHS
+
+    # DEFINE THE WORKING FOLDER FOR I/O
+    predict_input = Path("\Users\floodai\UNOSAT_FloodAI_v2\1data\4final\predict_input")
+    # print(f'>>>working folder: {predict_input}')
+    if path_not_exists(predict_input):
+        print(f"---No input folder found in {predict_input}")
+        return
+    
+    minmax_path = Path("\Users\floodai\UNOSAT_FloodAI_v2\2configs\global_minmax_INPUT\global_minmax.json")
+    if path_not_exists(minmax_path):
+        return
+
+    ckpt_path = Path("\Users\floodai\UNOSAT_FloodAI_v2\5checkpoints\ckpt_INPUT")
 
     ############################################################################
+    if test:
+        threshold =  0.35 # PREDICTION CONFIDENCE THRESHOLD
+        tile_size = 256 # TILE SIZE FOR INFERENCE
+        # Normalize all paths in the config
+        image = check_single_input_filetype(predict_input, 'image', '.tif')
+        if image is None:
+            print(f"---No input image found in {predict_input}")
+            return
+        output_folder = Path(config['output_folder'])
+        output_filename = '_x'
+        # analysis_extent = Path('Users/floodai/UNOSAT_FloodAI_v2/1data/4final/predict_INPUT/extent_INPUT')  
 
+    # READ CONFIG
+    if config:
+        config_path = Path('\Users\floodai\UNOSAT_FloodAI_v2\2configs\floodaiv2_config.yaml')
+        with open(config_path, "r") as file:
+            config = yaml.safe_load(file)
+        threshold = config["threshold"] # PREDICTION CONFIDENCE THRESHOLD
+        tile_size = config["tile_size"] # TILE SIZE FOR INFERENCE
+        # Normalize all paths in the config
+        input_file = Path(config['input_file'])
+        output_folder = Path(config['output_folder'])
+        output_filename = Path(config['output_filename'])
+        # analysis_extent = Path(config['analysis_extent'])
+
+    # print(f'>>> config = {config}')
+    print(f'>>>image: {image}')
+    print(f'>>>threshold: {threshold}') 
+    print(f'>>>tile_size: {tile_size}')
+    print(f'>>>output_folder= {output_folder}')
+    print(f'>>>output_filename= {output_filename}')
+    # print(f'>>>alalysis_extent= {analysis_extent}')
     # print(f'>>> IF TRAINING: CHECK LAYERDICT NAMES=FILENAMES IN FOLDER <<<')
     # FIND THE CKPT
     ckpt = next(ckpt_path.rglob("*.ckpt"), None)
@@ -289,14 +310,7 @@ def main(test=False):
         return
     print(f'>>>ckpt: {ckpt.name}')
 
-    image = input_file # FROM CONFIG
-    if test:
-        # FIND THE SAR IMAGE
-        image = check_single_input_filetype(img_src, 'image', '.tif')
-    if image is None:
-        return
-    print(f'>>>image: {image}')
-    # poly = check_single_input_filetype(img_src,  'poly', '.kml')
+    # poly = check_single_input_filetype(predict_input,  'poly', '.kml')
     # if poly is None:
         # return
 
@@ -320,7 +334,7 @@ def main(test=False):
         #     return
 
     # CREATE THE EXTRACTED FOLDER
-    extracted = img_src / f'{image_code}_extracted'
+    extracted = predict_input / f'{image_code}_extracted'
 
     
     print(f'>>> MAKE_TIFS = {MAKE_TIFS}')
@@ -366,18 +380,15 @@ def main(test=False):
 
     final_image = extracted / 'final_image.tif'
 
-
     # GET THE TRAINING MIN MAX STATS
     statsdict =  read_minmax_from_json(minmax_path)
     stats = (statsdict["min"], statsdict["max"])
 
-
-
     if MAKE_DATAARRAY:
-        create_event_datacube_TSX_inf(img_src, image_code)
+        create_event_datacube_TSX_inf(predict_input, image_code)
 
-    cube = next(img_src.rglob("*.nc"), None)  
-    save_tiles_path = img_src /  f'{image_code}_tiles'
+    cube = next(predict_input.rglob("*.nc"), None)  
+    save_tiles_path = predict_input /  f'{image_code}_tiles'
 
     if save_tiles_path.exists():
         # print(f">>> Deleting existing tiles folder: {save_tiles_path}")
@@ -392,7 +403,6 @@ def main(test=False):
     # print(f">>>{len(metadata)} metadata saved to {save_tiles_path}")
     # metadata = Path(save_tiles_path) / 'tile_metadata.json'
 
-
     # INITIALIZE THE MODEL
     device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = UnetModel( encoder_name="resnet34", in_channels=1, classes=1, pretrained=False 
@@ -403,7 +413,6 @@ def main(test=False):
     checkpoint = torch.load(ckpt_path)
 
     cleaned_state_dict = clean_checkpoint_keys(checkpoint["state_dict"])
-
 
     # EXTRACT THE MODEL STATE DICT
     # state_dict = checkpoint["state_dict"]
