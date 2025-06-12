@@ -85,25 +85,22 @@ def main(train, test):
     """
     device = pick_device()                       # used everywhere below
     logger.debug(f">>> Using device: {device}")
-
+    # ''''''''''''''''''''
     env_file = repo_root / ".env"
     if env_file.exists():
         load_dotenv(env_file)
     else:
         logger.debug(">>>Warning: .env not found; using shell environment")
-
-
+    # ...................
     if test and train:
         raise ValueError("You can only specify one of --train or --test.")
     train = True
-
     if  test:
         train = False
         logger.debug('>>> ARE YOU TESTING THE CORRECT CKPT? <<<')
-    logger.debug(f"train={train}, test={test}")
-
     job_type = "train" if train else "test"
-
+    logger.debug(f"train={train}, test={test}")
+    # ....................
     # Basic Setup
     start = time.time()
     timestamp = datetime.now().strftime("%y%m%d_%H%M")
@@ -118,7 +115,7 @@ def main(train, test):
 
     test_ckpt_path = repo_root / "checkpoints" / "ckpt_INPUT"
     save_path = repo_root / "results"
-    project = "LAUSANNE"
+    project = "mac_py_package"
     subset_fraction = 1
     bs = 8
     max_epoch =15

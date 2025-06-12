@@ -5,19 +5,15 @@ import sys
 import signal
 import random
 import matplotlib.pyplot as plt
-
+import logging
 from pathlib import Path
 from pytorch_lightning.loggers import WandbLogger
 from torch.utils.data import Subset , Dataset, DataLoader
 from torch import Tensor, einsum
-# from functools import partial
-# from operator import itemgetter, mul
-# from typing import Tuple, Callable, List, TypeVar, Any
-
 import segmentation_models_pytorch as smp
 from scripts.train.train_helpers import nsd
 
-# from sklearn.metrics import precision_recall_curve, auc, f1_score
+logger = logging.getLogger(__name__)
 
 def create_subset(file_list, event, stage,  subset_fraction , inputs, bs, num_workers, persistent_workers):
     from scripts.train.train_classes import FloodDataset
@@ -151,10 +147,8 @@ def wandb_initialization(job_type, repo_path, project, dataset_name, run_name, t
         job_type=job_type,
         config=wandb_config,
         mode=mode,
-        dir=repo_path / "4results",
+        dir=repo_path / "results",
     )
-
-    
 
     if job_type != 'reproduce':
         # Create and log dataset artifact
@@ -169,10 +163,16 @@ def wandb_initialization(job_type, repo_path, project, dataset_name, run_name, t
             },
         )
         # Add references
-        train_list_path = str(train_list).replace("\\", "/")
-        train_list_uri = f"file:////{train_list_path}"
+
+        # turn your train_list (str or Path) into a proper file:// URI
+        logger.info(f">>> train_list: {train_list}")
+        p = Path(train_list).expanduser().resolve()
+        logger.info(f">>> train_list resolved: {p}")
+        train_list_uri = p.as_uri()
+        logger.info(f">>> train_list_uri: {train_list_uri}")
+        # data_artifact = mlflow.data.DataArtifact()  # or however you construct it
         data_artifact.add_reference(train_list_uri, name="train_list")
-        run.log_artifact(data_artifact, aliases=[ dataset_name])
+        run.log_artifact(data_artifact, aliases=[dataset_name])
 
     elif job_type == 'reproduce':
         # Retrieve dataset artifact
