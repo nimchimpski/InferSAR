@@ -18,6 +18,14 @@ import random
 # from scripts.train_modules.train_classes import FloodDataset
 #------------------------------------------
 
+# gpu
+
+def pick_device() -> torch.device:
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    return torch.device("cpu")
 
 
 def collate_fn(batch):

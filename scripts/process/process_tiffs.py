@@ -115,9 +115,6 @@ def create_vv_and_vh_tifs(file):
             # delete original image using unlink() method
     #logger.debug('---finished create_vv_and_vh_tifs fn')
 
-
-
-
 # CREAT ANALYSIS EXTENT
 def create_extent_from_mask(mask_path, output_raster, no_data_value=None):
     """

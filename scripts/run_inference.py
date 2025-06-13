@@ -16,8 +16,9 @@ import logging
 from rasterio.plot import show
 from rasterio.windows import Window
 from rasterio.warp import calculate_default_transform, reproject, Resampling
-from scripts.train_modules.train_classes import UnetModel
-from scripts.process.process_tiffs_module import  create_event_datacube_TSX_inf,reproject_to_4326_gdal, make_float32_inf, resample_tiff_gdal
+from scripts.train.train_classes import UnetModel
+from scripts.train.train_helpers import pick_device
+from scripts.process.process_tiffs import  create_event_datacube_TSX_inf,reproject_to_4326_gdal, make_float32_inf, resample_tiff_gdal
 from scripts.process.process_dataarrays import tile_datacube_rxr_inf
 from scripts.process.process_helpers import  print_tiff_info_TSX, check_single_input_filetype, rasterize_kml_rasterio, compute_image_minmax, process_raster_minmax, path_not_exists, read_minmax_from_json, normalize_imagedata_inf, read_raster, write_raster
 from collections import OrderedDict
@@ -31,6 +32,8 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S")
 
 logger = logging.getLogger(__name__)
+
+device = pick_device()
 
 def create_weight_matrix(tile_size, overlap_size):
     """Generate a weight matrix using cosine decay for blending."""
@@ -70,6 +73,7 @@ def make_prediction_tiles(tile_folder, metadata, model, device, threshold, ):
         # Perform inference
         with torch.no_grad():
             pred = model(tile_tensor)
+            # pred = torch.sigmoid(pred).squeeze().cpu().numpy()  # Convert logits to probabilities
             pred = torch.sigmoid(pred).squeeze().cpu().numpy()  # Convert logits to probabilities
             pred = (pred > threshold).astype(np.float32)  # Convert probabilities to binary mask
             pred[nodata_mask] = 0  # Mask out no-data areas
@@ -123,6 +127,7 @@ def make_prediction_tiles_new(tile_folder, metadata, model, device, threshold, s
         # PERFORM INFERENCE
         with torch.no_grad():
             pred = model(tile_tensor)
+            # pred = torch.sigmoid(pred).squeeze().cpu().numpy()  # Convert logits to probabilities
             pred = torch.sigmoid(pred).squeeze().cpu().numpy()  # Convert logits to probabilities
             pred[nodata_mask] = 0  # Mask out no-data areas
 
@@ -250,41 +255,41 @@ def main(test=False):
     # VARIABLES................................................................
     norm_func = 'logclipmm_g' # 'mm' or 'logclipmm'
     stats = None
-    MAKE_TIFS = False
-    MAKE_DATAARRAY= False
-    stride = tile_size
+    MAKE_TIFS = True
+    MAKE_DATAARRAY= True
+    # stride = tile_size
     ############################################################################
     # DEFINE PATHS
-
     # DEFINE THE WORKING FOLDER FOR I/O
-    predict_input = Path("\Users\floodai\UNOSAT_FloodAI_v2\1data\4final\predict_input")
-    # print(f'>>>working folder: {predict_input}')
+    predict_input = Path("/Users/alexwebb/laptop_coding/floodai/UNOSAT_FloodAI_v2/data/4final/predict_input")
+    print(f'>>>working folder: {predict_input}')
     if path_not_exists(predict_input):
-        print(f"---No input folder found in {predict_input}")
         return
     
-    minmax_path = Path("\Users\floodai\UNOSAT_FloodAI_v2\2configs\global_minmax_INPUT\global_minmax.json")
+    minmax_path = Path("/Users/alexwebb/laptop_coding/floodai/UNOSAT_FloodAI_v2/configs/global_minmax_INPUT/global_minmax.json")
     if path_not_exists(minmax_path):
         return
 
-    ckpt_path = Path("\Users\floodai\UNOSAT_FloodAI_v2\5checkpoints\ckpt_INPUT")
+    ckpt_path = Path("/Users/alexwebb/laptop_coding/floodai/UNOSAT_FloodAI_v2/checkpoints/ckpt_INPUT")
 
     ############################################################################
     if test:
-        threshold =  0.35 # PREDICTION CONFIDENCE THRESHOLD
-        tile_size = 256 # TILE SIZE FOR INFERENCE
+        threshold =  0.8 # PREDICTION CONFIDENCE THRESHOLD
+        tile_size = 512 # TILE SIZE FOR INFERENCE
         # Normalize all paths in the config
         image = check_single_input_filetype(predict_input, 'image', '.tif')
         if image is None:
             print(f"---No input image found in {predict_input}")
             return
-        output_folder = Path(config['output_folder'])
+        else:
+            print(f'>>>found input image: {image.name}')
+        output_folder = predict_input
         output_filename = '_x'
-        # analysis_extent = Path('Users/floodai/UNOSAT_FloodAI_v2/1data/4final/predict_INPUT/extent_INPUT')  
+        # analysis_extent = Path('Users/alexwebb/floodai/UNOSAT_FloodAI_v2/data/4final/predict_INPUT/extent_INPUT')  
 
     # READ CONFIG
-    if config:
-        config_path = Path('\Users\floodai\UNOSAT_FloodAI_v2\2configs\floodaiv2_config.yaml')
+    else:
+        config_path = Path('/Users/alexwebb/laptop_coding/floodai/UNOSAT_FloodAI_v2/configs/floodaiv2_config.yaml')
         with open(config_path, "r") as file:
             config = yaml.safe_load(file)
         threshold = config["threshold"] # PREDICTION CONFIDENCE THRESHOLD
@@ -294,6 +299,8 @@ def main(test=False):
         output_folder = Path(config['output_folder'])
         output_filename = Path(config['output_filename'])
         # analysis_extent = Path(config['analysis_extent'])
+
+    stride = tile_size # STRIDE FOR TILING, SAME AS TILE SIZE
 
     # print(f'>>> config = {config}')
     print(f'>>>image: {image}')
@@ -315,13 +322,18 @@ def main(test=False):
         # return
 
     # GET REGION CODE FROM MASK TODO
-    sensor = image.parents[1].name.split('_')[:1]
+    # sensor = image.parents[1].name.split('_')[:1]
+    sensor = 'sensor'
     # print(f'>>>datatype= ',sensor[0])
-    date = image.parents[1].name.split('_')[10]
+    # date = image.parents[1].name.split('_')[0]
+    date = 'date'
     # print(f'>>>date= ',date)
-    image_code = "_".join(image.parents[3].name.split('_')[4:])
+    # image_code = "_".join(image.parents[3].name.split('_')[4:])
+    # image_code = "_".join(image.parents[1].name.split('_')[1])
+    parts = image.name.split('_')
+    image_code = "_".join(parts[:-1])
     # print(f'>>>image_code= ',image_code)
-    save_path = output_folder / f'{sensor[0]}_{image_code}_{date}_{tile_size}_{threshold}{output_filename}WATER_AI.tif'
+    save_path = output_folder / f'{sensor}_{image_code}_{date}_{tile_size}_{threshold}{output_filename}WATER_AI.tif'
 
     print(f'>>>save_path: {save_path.name}')
     if save_path.exists():
@@ -404,7 +416,8 @@ def main(test=False):
     # metadata = Path(save_tiles_path) / 'tile_metadata.json'
 
     # INITIALIZE THE MODEL
-    device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device=pick_device()
     model = UnetModel( encoder_name="resnet34", in_channels=1, classes=1, pretrained=False 
     )   
     model.to(device)
