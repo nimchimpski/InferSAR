@@ -893,7 +893,7 @@ def tile_datacube_rxr_inf(datacube_path, save_tiles_path, tile_size, stride, nor
     var = list(ds.data_vars)[0]
     da = ds[var]
 
-    logger.info('---DS VARS BEFORE TILING = ', list(ds.data_vars))
+    # logger.info('---DS VARS BEFORE TILING = ', list(ds.data_vars))
 
     # logger.info_dataarray_info(da)
     if da.chunks:

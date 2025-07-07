@@ -7,7 +7,7 @@
  tile_size : 1024
 #  256, 512, 1024 max
               
- input_file :  C:\Users\floodai\UNOSAT_FloodAI_v2\1data\4final\predict_INPUT\dims_op_oc_dfd2_696555741_1\TSX-1.SAR.L1B\TDX1_SAR__EEC_RE___SM_S_SRA_20241217T161810_20241217T161816\IMAGEDATA\IMAGE_HH_SRA_strip_027.tif
+ input_file :  
             
 #  REMOVE QUOTATION MARKS!
  output_folder :    C:\Users\floodai\UNOSAT_FloodAI_v2\1data\4final\predict_INPUT   
