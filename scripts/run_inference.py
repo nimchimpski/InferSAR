@@ -32,7 +32,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S")
 
 logger = logging.getLogger(__name__)
-logging.getLogger('scripts.process.process_helpers').setLevel(logging.WARNING)
+logging.getLogger('scripts.process.process_helpers').setLevel(logging.INFO)
 
 device = pick_device()
 
@@ -255,7 +255,7 @@ def main(test=False):
 
     # VARIABLES................................................................
     norm_func = 'logclipmm_g' # 'mm' or 'logclipmm'
-    stats = None
+    stats = 1
     MAKE_TIFS = 1
     MAKE_DATAARRAY= 1
     # stride = tile_size
@@ -278,7 +278,7 @@ def main(test=False):
         threshold =  0.8 # PREDICTION CONFIDENCE THRESHOLD
         tile_size = 512 # TILE SIZE FOR INFERENCE
         # Normalize all paths in the config
-        image = check_single_input_filetype(predict_input, 'image', '.tif')
+        image = check_single_input_filetype(predict_input, 'image', '.tif', '.tiff')
         if image is None:
             logger.info(f"---No input image found in {predict_input}")
             return
@@ -358,13 +358,13 @@ def main(test=False):
             shutil.rmtree(extracted)
         extracted.mkdir(exist_ok=True)
 
-        # CHANGE DATATYPE TO FLOAT32
+        ###### CHANGE DATATYPE TO FLOAT32
         logger.info('CHANGING DATATYPE')
         image_32 = extracted / f'{image_code}_32.tif'
         make_float32_inf(image, image_32)
         # logger.info_tiff_info_TSX(image_32, 1)
 
-        # RESAMPLE TO 2.5
+        ##### RESAMPLE TO 2.5
         # logger.info('RESAMPLING')
         # resamp_image = extracted / f'{image_32.stem}_resamp'
         # resample_tiff_gdal(image_32, resamp_image, target_res=2.5)
@@ -373,13 +373,13 @@ def main(test=False):
         # with rasterio.open(image) as src:
             # logger.info(f'src shape= ',src.shape)
 
-        # SORT OUT ANALYSIS EXTENT
+        ##### SORT OUT ANALYSIS EXTENT
 
         # ex_extent = extracted / f'{image_code}_extent.tif'
         # create_extent_from_mask(image, ex_extent)
         # rasterize_kml_rasterio( poly, ex_extent, pixel_size=0.0001, burn_value=1)
 
-        # REPROJECT IMAGE
+        ####### REPROJECT IMAGE TO 4326
         logger.info('REPROJECTING')
         final_image = extracted / 'final_image.tif'
         reproject_to_4326_gdal(image_32, final_image, resampleAlg = 'bilinear')

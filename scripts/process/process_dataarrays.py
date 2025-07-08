@@ -1003,7 +1003,7 @@ def tile_datacube_rxr_inf(datacube_path, save_tiles_path, tile_size, stride, nor
             logger.info
             if not dest_path.parent.exists():
                 os.makedirs(dest_path.parent, exist_ok=True)
-                logger.info('---created dir= ', dest_path.parent)
+                logger.info(f'---created dir=  {dest_path.parent}')
 
             ######### SAVE TILE ############
             # Save layer names as metadata

@@ -19,11 +19,13 @@ logger = logging.getLogger(__name__)
 
 # CHECKS FOR INITIAL FOLDERS
 
-def check_single_input_filetype(folder,  title, fsuffix):
+def check_single_input_filetype(folder,  title, fsuffix1, fsuffix2):
     logger.info(f"---Checking for {title} in {folder}")
-    # logger.info(f"---Suffix: {fsuffix}")
-    # logger.info(f"---Title: {title}")
-    input_list = [i for i in folder.iterdir() if i.is_file() and i.suffix.lower() == fsuffix.lower() and title.lower() in i.name.lower()]
+    logger.info(f"---Suffix1: {fsuffix1}")
+    logger.info(f"---Suffix2: {fsuffix2}")
+    logger.info(f"---Title: {title}")
+    suffixes = [fsuffix1.lower(), fsuffix2.lower()]
+    input_list = [i for i in folder.iterdir() if i.is_file() and (i.suffix.lower() in suffixes) and title.lower() in i.name.lower()]
 
     if len(input_list) == 0:
         logger.info(f"---No file with '{title}' found in {folder}")
