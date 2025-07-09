@@ -55,19 +55,7 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-#.............................................................
-# PATHS DEFINITIONS ANd CONSTANTS
-repo_root = Path(__file__).resolve().parents[2]
-# logger.info(f"repo root: {repo_root}")
-
 os.environ['KMP_DUPLICATE_LIB_OK'] = "True"
-
-# def pick_device() -> torch.device:
-#     if torch.backends.mps.is_available():
-#         return torch.device("mps")
-#     if torch.cuda.is_available():
-#         return torch.device("cuda")
-#     return torch.device("cpu")
 
 def handle_interrupt(signum, frame):
     logger.info("\n---Custom signal handler: SIGINT received. Exiting.")
@@ -85,30 +73,29 @@ def main(train, test):
     """
     device = pick_device()                       # used everywhere below
     logger.info(f">>> Using device: {device}")
-    # ''''''''''''''''''''
-    env_file = repo_root / ".env"
-    if env_file.exists():
-        load_dotenv(env_file)
-    else:
-        logger.info(">>>Warning: .env not found; using shell environment")
-    # ...................
+
     if test and train:
         raise ValueError("You can only specify one of --train or --test.")
     train = True
     if  test:
         train = False
         logger.info('>>> ARE YOU TESTING THE CORRECT CKPT? <<<')
+
     job_type = "train" if train else "test"
     logger.info(f"train={train}, test={test}")
-    # ....................
-    # Basic Setup
+
     start = time.time()
     timestamp = datetime.now().strftime("%y%m%d_%H%M")
+
     signal.signal(signal.SIGINT, handle_interrupt)
     torch.set_float32_matmul_precision('medium')
     pl.seed_everything(42, workers=True)
+
     ###########################################################
-    # Paths and Parameters
+    # PATHS DEFINITIONS ANd CONSTANTS
+    repo_root = Path(__file__).resolve().parents[2]
+    # logger.info(f"repo root: {repo_root}")
+    env_file = repo_root / ".env"
     dataset_path = repo_root / "data" / "4final" / "train_INPUT"
     if test:
         dataset_path = repo_root / "data" / "4final" / "test_INPUT"
@@ -133,6 +120,11 @@ def main(train, test):
     focal_gamma = 8
     bce_weight = 0.35 # FOR BCE_DICE
     ###########################################################
+
+    if env_file.exists():
+        load_dotenv(env_file)
+    else:
+        logger.info(">>>Warning: .env not found; using shell environment")
     # Dataset Setup
     input_folders = [i for i in dataset_path.iterdir() if i.is_dir() and not i.name.startswith(".")]
  
