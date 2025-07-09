@@ -48,18 +48,19 @@ from scripts.train.train_helpers import is_sweep_run, pick_device
 from scripts.train.train_classes import  UnetModel,   Segmentation_training_loop 
 from scripts.train.train_functions import  loss_chooser, wandb_initialization, job_type_selector, create_subset
 
+start = time.time()
+
 logging.basicConfig(
     level=logging.INFO,                            # DEBUG, INFO,[ WARNING,] ERROR, CRITICAL
     format=" %(levelname)-8s %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S")
 
 logger = logging.getLogger(__name__)
+logging.getLogger('scripts.process.process_helpers').setLevel(logging.INFO)
 
 os.environ['KMP_DUPLICATE_LIB_OK'] = "True"
 
-def handle_interrupt(signum, frame):
-    logger.info("\n---Custom signal handler: SIGINT received. Exiting.")
-    sys.exit(0)
+
 # Register signal handler for SIGINT (Ctrl+C)
 signal.signal(signal.SIGINT, handle_interrupt)
 
@@ -68,10 +69,8 @@ signal.signal(signal.SIGINT, handle_interrupt)
 @click.option('--test', is_flag=True, help="Test the model")
 
 def main(train, test):
-    """
-    CONDA ENVIRONMENT = 'floodai_train'
-    """
-    device = pick_device()                       # used everywhere below
+
+    device = pick_device()                       
     logger.info(f">>> Using device: {device}")
 
     if test and train:
@@ -84,17 +83,15 @@ def main(train, test):
     job_type = "train" if train else "test"
     logger.info(f"train={train}, test={test}")
 
-    start = time.time()
     timestamp = datetime.now().strftime("%y%m%d_%H%M")
 
-    signal.signal(signal.SIGINT, handle_interrupt)
     torch.set_float32_matmul_precision('medium')
     pl.seed_everything(42, workers=True)
 
     ###########################################################
     # PATHS DEFINITIONS ANd CONSTANTS
     repo_root = Path(__file__).resolve().parents[2]
-    # logger.info(f"repo root: {repo_root}")
+    logger.info(f"repo root: {repo_root}")
     env_file = repo_root / ".env"
     dataset_path = repo_root / "data" / "4final" / "train_INPUT"
     if test:
