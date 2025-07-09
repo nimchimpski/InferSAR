@@ -99,23 +99,54 @@ def compute_dataset_minmax(dataset, band_to_read=1):
     
     # Iterate through all image files in each event
     for event in dataset.iterdir(): # ITER EVENT
-        logger.info(f'---event= {event.name}')    
-        if event.is_dir():
-            images = list(event.rglob('*image*.tif') )
-            logger.info(f'---num images= {len(images)}')
-            if len(images) != 1:
-                raise (f"---Error: {event.name} contains {len(images)} images. Skipping...")
-            image = images[0]
 
-            # logger.info(f"---Processing {image}")
-            try:
-                lmin, lmax = compute_image_minmax(image, band_to_read)
-                global_min = int(min(global_min, lmin))
-                global_max = int(max(global_max, lmax))
-                logger.info(f'---global_min={global_min}, global_max={global_max}')
-            except Exception as e:
-                logger.info(f"Error processing {image}: {e}")
-                continue
+        images = list(event.rglob('*image*.tif') )
+        logger.info(f'---num images= {len(images)}')
+        if len(images) != 1:
+            raise (f"---Error: {event.name} contains {len(images)} images. Skipping...")
+        image = images[0]
+        # logger.info(f"---Processing {image}")
+        try:
+            lmin, lmax = compute_image_minmax(image, band_to_read)
+            global_min = int(min(global_min, lmin))
+            global_max = int(max(global_max, lmax))
+            logger.info(f'---global_min={global_min}, global_max={global_max}')
+        except Exception as e:
+            logger.info(f"Error processing {image}: {e}")
+            continue
+
+    logger.info(f"Global Min: {global_min}, Global Max: {global_max}")
+    return global_min, global_max
+
+def compute_traintiles_minmax(dataset, band_to_read=1):
+    """
+    Computes the global minimum and maximum pixel values for a dataset.
+    
+    Parameters:
+        dataset_dir (str or Path): Directory containing all input images.
+    
+    Returns:
+        global_min (float): Global minimum pixel value.
+        global_max (float): Global maximum pixel value.
+    """
+    logger.info('+++in compute_dataset_minmax')
+    global_min = float('inf')
+    global_max = float('-inf')
+    
+    # Iterate through all image files in each event
+    for image in dataset.iterdir(): # ITER EVENT
+
+
+        # logger.info(f"---Processing {image.name}")
+        try:
+            lmin, lmax = compute_image_minmax(image, band_to_read)
+            logger.info(f"local: Min: {lmin}, Max: {lmax}")
+            global_min = min(global_min, lmin)
+            global_max = max(global_max, lmax)
+            logger.info(f'---global_min={global_min}, global_max={global_max}')
+        except Exception as e:
+            logger.info(f"Error processing {image}: {e}")
+            continue
 
     logger.info(f"Global Min: {global_min}, Global Max: {global_max}")
     return global_min, global_max
@@ -176,11 +207,11 @@ def compute_image_minmax(image, band_to_read=1):
     with rasterio.open(image) as src:
         # Read the data as a NumPy array
         data = src.read(band_to_read)  # Read the first band
-        min, max = int(data.min()), int(data.max())
+        lmin, lmax = int(data.min()), int(data.max())
         logger.info(f"---{image.name}: Min: {data.min()}, Max: {data.max()}")
         # get image size in pixels
         logger.info(f"---: Shape: {data.shape}")
-    return min, max
+    return lmin, lmax
 
 def normalize_imagedata_0( data, glob_max, loc_max):
         data = data * glob_max / loc_max

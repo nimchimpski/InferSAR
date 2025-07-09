@@ -255,7 +255,7 @@ def main(test=False):
 
     # VARIABLES................................................................
     norm_func = 'logclipmm_g' # 'mm' or 'logclipmm'
-    stats = 1
+    stats = 0
     MAKE_TIFS = 1
     MAKE_DATAARRAY= 1
     # stride = tile_size
@@ -275,8 +275,8 @@ def main(test=False):
 
     ############################################################################
     if test:
-        threshold =  0.8 # PREDICTION CONFIDENCE THRESHOLD
-        tile_size = 512 # TILE SIZE FOR INFERENCE
+        threshold =  0.5 # PREDICTION CONFIDENCE THRESHOLD
+        tile_size = 256 # TILE SIZE FOR INFERENCE
         # Normalize all paths in the config
         image = check_single_input_filetype(predict_input, 'image', '.tif', '.tiff')
         if image is None:
@@ -395,6 +395,7 @@ def main(test=False):
     # GET THE TRAINING MIN MAX STATS
     statsdict =  read_minmax_from_json(minmax_path)
     stats = (statsdict["min"], statsdict["max"])
+    logger.info(f'---stats: {stats}')
 
     if MAKE_DATAARRAY:
         create_event_datacube_TSX_inf(predict_input, image_code)
