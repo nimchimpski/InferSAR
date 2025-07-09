@@ -264,16 +264,6 @@ class Sen1Floods11Dataset(Dataset):
 
         return [torch.from_numpy(img), torch.from_numpy(mask)]
 
-# ——— USAGE ———
-
-root = Path("/path/to/v1.1/data")
-train_ds = Sen1Floods11Dataset(root/"train.csv", root)
-val_ds   = Sen1Floods11Dataset(root/"val.csv",   root)
-test_ds  = Sen1Floods11Dataset(root/"test.csv",  root)
-
-train_loader = DataLoader(train_ds, batch_size=8, shuffle=True, num_workers=4)
-val_loader   = DataLoader(val_ds,   batch_size=8, shuffle=False, num_workers=4)
-
 
 class Segmentation_training_loop(pl.LightningModule):
 
