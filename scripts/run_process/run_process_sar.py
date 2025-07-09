@@ -20,15 +20,8 @@ logging.basicConfig(
     format=" %(levelname)-8s %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S"
 )
-# logging.basicConfig(
-#     level=logging.DEBUG,                            # DEBUG, INFO,[ WARNING,] ERROR, CRITICAL
-#     format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
-#     datefmt="%Y-%m-%d %H:%M:%S"
-# )
-logger = logging.getLogger(__name__)
 
-# logger.debug("debug is visible")
-# logger.debug("info is visible")
+logger = logging.getLogger(__name__)
 
 @click.command()
 @click.option('--test', is_flag=True, help='loading from test folder', show_default=False)
@@ -37,7 +30,7 @@ def main(test=None):
 
     ############################################################################
     # data_src = Path(r"Y:\1NEW_DATA\1data\2interim\ALL TSX PROCESSING")
-    repo_root = Path('/Users/alexwebb/laptop_coding/floodai/UNOSAT_FloodAI_v2')
+    repo_root = Path('/Users/alexwebb/laptop_coding/floodai/InferSAR')
     events = repo_root / 'data' / '2interim' / 'events_extracted'
     data_src = Path('/Volumes/Lacie storage 6TB/SAR')
 
