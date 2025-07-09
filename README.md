@@ -4,16 +4,8 @@ This document is still under development, and parts stilll refer to FloodAI_V2 u
 
 INFERSAR is a lightweight field tool developed from FloodAI_V2, itself originally developed for the United Nations Satellite Centre (UNOSAT) to support rapid, high-accuracy flood mapping during emergency response operations. It was created from scratch as a fully modular, maintainable, and scalable codebase, designed to integrate smoothly into operational workflows. Existing preprocess code structure is optimised for training on the Sen1Floods11 dataset, but it also supports additional geospatial inputs like Digital Elevation Models (DEM) and terrain slope for improved segmentation performance in complex landscapes. Built on PyTorch Lightning, the system includes GPU-accelerated training, flexible architecture support, and seamless logging via Weights & Biases.
 
-This repository hosts a continued, independently maintained version of FloodAI-V2, incorporating enhancements and adaptations beyond the original scope.
-
-## Key Features of InferSAR:   
-The code attempts to be modular with reusable functions split across ‘modules’.
-Multiple dataset versions were made for training and testing - based on 
-1) DLR Water S1S2 combined with UNOSAT data 
-2) DLR TerraSARX / TanDEMX
-
 ### Preprocessing Enhancements:   
-A new data preprocessing pipeline was developed extract the relevant data from Geotifs concatenating it into  xarray datasets along with other data such as DEM and SLOPE, which is then converted into machine-learning-ready tiles, with mappable layers as model input channels.
+The preprocessing pipeline extracts the relevant data from Geotifs concatenating it into  xarray datasets along with other data such as DEM and SLOPE, which is then converted into machine-learning-ready tiles, with mappable layers as model input channels.
 Normalization steps included   log scaling, clipping, and Min-Max normalization   for SAR data, ensuring consistency during training and inference. Normalization is shown to have a huge impact on training results.
 A   parameterized tile selection process   was trialled and partially implemented, allowing controlled class balancing and landcover diversity.  Current class balance selection is random, with insufficient control to achieve a varied selection of landcover types in the tiles meeting the desired percentage below the required threshold. Use of  STAC metadata to one simple and powerful way to solve this.
 
@@ -81,4 +73,9 @@ Takes a file name - this is appended to the already added datatype, filename, ti
 
 DATASET FOLDER
 A collection of folders (events).
-Each event has 
+The event foldername should contain its unique code (find and edit '# GET REGION CODE FROM FOLDER' )
+
+Each event folder must contain:
+-image tif (*image.tif) - VV polarisation 
+-mask tif (*mask.tif)
+
