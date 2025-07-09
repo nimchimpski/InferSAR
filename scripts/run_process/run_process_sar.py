@@ -43,10 +43,10 @@ def main(test=None):
         logger.debug('>>>TEST MODE<<<')
         dataset =  data_src / 'SAR_process_TEST'
     
-    make_tifs = 1
-    make_datacubes = 1
+    make_tifs = 0
+    make_datacubes = 0
     get_minmax = 0
-    make_norm_tiles = 1
+    make_norm_tiles = 0
     norm_func = 'logclipmm_g' # 'mm' or 'logclipmm'
     minmax_path = repo_root / 'configs' / 'global_minmax_INPUT' / 'global_minmax.json'
     percent_non_flood = 1

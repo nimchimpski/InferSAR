@@ -1,8 +1,12 @@
+from pathlib import Path
+    
+tile_path = Path('/xxx')
+normalized_tiles_path = Path('/Users/alexwebb/laptop_coding/floodai/INFERSAR/data/4final/train_input')
+
 def main(tile_path, normalized_tiles_path):
     print('++++IN PROCESS TILES NEW DIR')   
 
-    tile_path = Path('/xxx')
-    normalized_tiles_path = Path('/xxx')
+ 
     
 
     # if normalized_tiles_path.exists():
