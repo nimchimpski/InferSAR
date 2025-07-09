@@ -93,7 +93,7 @@ def main(train, test):
     repo_root = Path(__file__).resolve().parents[2]
     logger.info(f"repo root: {repo_root}")
     env_file = repo_root / ".env"
-    dataset_path = repo_root / "data" / "4final" / "train_input"
+    dataset_path = repo_root / "data" / "4final" / "train_input" / "datasetname"
     if test:
         dataset_path = repo_root / "data" / "4final" / "test_input"
 
@@ -124,12 +124,12 @@ def main(train, test):
     else:
         logger.info(">>>Warning: .env not found; using shell environment")
     # Dataset Setup
-    input_folders = [i for i in dataset_path.iterdir() if i.is_dir() and not i.name.startswith(".")]
+    # input_folders = [i for i in dataset_path.iterdir() if i.is_dir() and not i.name.startswith(".")]
  
-    logger.info(f">>>Input folders: {input_folders}")
-    assert len(input_folders) == 1
-    dataset_name = input_folders[0].name
-    dataset_path = dataset_path / dataset_name
+    # logger.info(f">>>Input folders: {input_folders}")
+    # assert len(input_folders) == 1
+    dataset_name = dataset_path.name
+    # dataset_path = dataset_path / dataset_name
     logger.info(f">>>Dataset: {dataset_path}")
 
     if user_loss != 'focal':
@@ -143,7 +143,7 @@ def main(train, test):
 
         # Dataset Lists
     train_list = dataset_path / "flood_train_data.csv"
-    val_list = dataset_path / "flood_val_data.csv"
+    val_list = dataset_path / "flood_valid_data.csv"
     test_list = dataset_path / "flood_test_data.csv"
 
         # Initialize W&B using your custom function
@@ -184,12 +184,12 @@ def main(train, test):
     
     persistent_workers = num_workers > 0
 
-    if job_type == "train":
-        train_list = train_list
-    elif job_type == "val":
-        val_list = val_list
-    elif job_type == "test":
-        test_list = test_list
+    # if job_type == "train":
+    #     train_list = train_list
+    # elif job_type == "val":
+    #     val_list = val_list
+    # elif job_type == "test":
+    #     test_list = test_list
     
 
     # dl = create_subset(file_list, dataset_path, job_type, subset_fraction, inputs, bs, num_workers, persistent_workers)
@@ -197,6 +197,11 @@ def main(train, test):
     # if ckpt_to_test is None:
     #     raise FileNotFoundError(f"No checkpoint found in {test_ckpt_path}")
 
+
+    # if job_type == "train":
+    #     logger.info(">>> Creating data loaders")
+    #     train_dl = create_subset(train_list, dataset_path, 'train', subset_fraction, inputs, bs, num_workers, persistent_workers)
+    #     val_dl = create_subset(val_list, dataset_path, 'val', subset_fraction, inputs, bs, num_workers, persistent_workers)
 
     if job_type == "train":
         logger.info(">>> Creating data loaders")
@@ -236,7 +241,7 @@ def main(train, test):
     #  – CUDA : fp16 autocast, accelerator="gpu"
     #  – CPU  : fp32
     #
-
+    logger.info(f'device type = {device.type}')
     accelerator = (
         "mps"
         if device.type == "mps"

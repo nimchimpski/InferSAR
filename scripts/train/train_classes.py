@@ -226,12 +226,12 @@ class Sen1Floods11Dataset(Dataset):
         self.img_paths  = []
         self.mask_paths = []
         with open(csv_path, newline='') as f:
-            reader = csv.DictReader(f)
+            reader = csv.reader(f)
             # assume the columns are named exactly "image" and "mask"
             for row in reader:
                 img_rel, mask_rel = row[0], row[1]
-                self.img_paths.append(self.root / img_rel)
-                self.mask_paths.append(self.root / mask_rel)
+                self.img_paths.append(self.root / 'S1Hand' / img_rel)
+                self.mask_paths.append(self.root / 'LabelHand' / mask_rel)
 
         if len(self.img_paths) != len(self.mask_paths):
             raise ValueError(
@@ -245,7 +245,7 @@ class Sen1Floods11Dataset(Dataset):
     def __getitem__(self, idx):
         # 1) Load VV & VH
         img_fp = self.img_paths[idx]
-        with rasterio.open(img_fp) as src:
+        with rasterio.open(self.root/'S1Hand'/img_fp) as src:
             vv = src.read(1).astype(np.float32)
             vh = src.read(2).astype(np.float32)
 
@@ -258,7 +258,8 @@ class Sen1Floods11Dataset(Dataset):
         img = np.stack([vv, vh], axis=0)  # shape [2,H,W]
 
         # 4) Load & binarize mask
-        with rasterio.open(self.mask_paths[idx]) as src:
+        msk_pth = self.root/'LabelHand'/self.mask_paths[idx]
+        with rasterio.open(msk_pth) as src:
             m = src.read(1)
         mask = (m == 1).astype(np.float32)[None, ...]  # shape [1,H,W]
 
@@ -320,9 +321,9 @@ class Segmentation_training_loop(pl.LightningModule):
         # DEBUGGING
         if torch.isnan(images).any() or torch.isinf(images).any():
             print(f"Batch {batch_idx} - Input contains NaN or Inf")
+            print(f"Validation Image Stats - Batch {batch_idx}")
+            print(f"Mean: {images.mean()}, Std: {images.std()}, Min: {images.min()}, Max: {images.max()}")
             raise ValueError(f"Input contains NaN or Inf at batch {batch_idx}")
-        # print(f"Validation Image Stats - Batch {batch_idx}")
-        # print(f"Mean: {images.mean()}, Std: {images.std()}, Min: {images.min()}, Max: {images.max()}")
 
         images, masks = images.to(self.device), masks.to(self.device)
         logits = self(images)

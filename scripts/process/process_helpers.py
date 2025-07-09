@@ -17,6 +17,10 @@ from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
+
+def handle_interrupt(signum, frame):
+    logger.info("\n---Custom signal handler: SIGINT received. Exiting.")
+    sys.exit(0)
 # CHECKS FOR INITIAL FOLDERS
 
 def check_single_input_filetype(folder,  title, fsuffix1, fsuffix2):
