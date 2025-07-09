@@ -1,10 +1,12 @@
-# INFERSAR
+This document is still under development, and parts stilll refer to FloodAI_V2 upon which InferSAR was built - apologies!
 
-INFERSAR is a deep learning framework originally developed for the United Nations Satellite Centre (UNOSAT) to support rapid, high-accuracy flood mapping during emergency response operations. It was created from scratch as a fully modular, maintainable, and scalable codebase, designed to integrate smoothly into operational workflows. Optimized for very high-resolution Synthetic Aperture Radar (SAR) imagery such as TerraSAR-X, it also supports additional geospatial inputs like Digital Elevation Models (DEM) and terrain slope for improved segmentation performance in complex landscapes. Built on PyTorch Lightning, the system includes GPU-accelerated training, flexible architecture support, and seamless logging via Weights & Biases.
+# InferSAR
+
+INFERSAR is a lightweight field tool developed from FloodAI_V2, itself originally developed for the United Nations Satellite Centre (UNOSAT) to support rapid, high-accuracy flood mapping during emergency response operations. It was created from scratch as a fully modular, maintainable, and scalable codebase, designed to integrate smoothly into operational workflows. Optimized for very high-resolution Synthetic Aperture Radar (SAR) imagery such as TerraSAR-X, it also supports additional geospatial inputs like Digital Elevation Models (DEM) and terrain slope for improved segmentation performance in complex landscapes. Built on PyTorch Lightning, the system includes GPU-accelerated training, flexible architecture support, and seamless logging via Weights & Biases.
 
 This repository hosts a continued, independently maintained version of FloodAI-V2, incorporating enhancements and adaptations beyond the original scope.
 
-## Key Features of FloodAI v2:   
+## Key Features of InferSAR:   
 The code attempts to be modular with reusable functions split across ‘modules’.
 Multiple dataset versions were made for training and testing - based on 
 1) DLR Water S1S2 combined with UNOSAT data 
@@ -16,7 +18,7 @@ Normalization steps included   log scaling, clipping, and Min-Max normalization 
 A   parameterized tile selection process   was trialled and partially implemented, allowing controlled class balancing and landcover diversity.  Current class balance selection is random, with insufficient control to achieve a varied selection of landcover types in the tiles meeting the desired percentage below the required threshold. Use of  STAC metadata to one simple and powerful way to solve this.
 
 ### Directory Structure:   
-The new pipeline is structured as a Python package (`FloodAIv2`) with modular scripts. The folder/file structure of the original FloodAI was left intact for backward compatibility, while FloodAIv2’s data was stored locally and backed up to a shared Y drive.  
+The new pipeline is structured as a Python package  with modular scripts.  
 
 ### Logging:   
 Integrated with   WandB   for detailed tracking of training metrics, including AUC-PR, F1, IoU, Precision, and Recall, as well plots and visualizations of prediction outputs compared to ground truths.
@@ -55,7 +57,7 @@ Results indicate one should aim to have a class ratio that best matches that whi
 
 Earlier the Test (evaluation) step were done using a subset of the data used for training - a fairly common technique. Using a 0.7, 0.15, 0.15 train/validate/test split, it was found that by introducing a large amount of tiles featuring mountain terrain coupled with zero flood ground truth labels, the model could effectively be taught that that ‘mountain shadow’ was not water (a persistent problem). This needs to be tested using K-fold / hold-1-region method. 
 
-## USING FLOODAI-V2 TO ANALYZE AN IMAGE - 
+## USING InferSAR TO ANALYZE AN IMAGE - 
 
 ### THE ENVIRONMENT
 If necessary run:
