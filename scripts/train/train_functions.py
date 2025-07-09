@@ -16,8 +16,8 @@ from scripts.train.train_helpers import nsd
 logger = logging.getLogger(__name__)
 
 def create_subset(file_list, event, stage,  subset_fraction , inputs, bs, num_workers, persistent_workers):
-    from scripts.train.train_classes import FloodDataset
-    dataset = FloodDataset(file_list, event, stage=stage, inputs=inputs)    
+    from scripts.train.train_classes import Sens1Floods11Dataset
+    dataset = Sens1Floods11Dataset(file_list, event, stage=stage, inputs=inputs)    
     subset_indices = random.sample(range(len(dataset)), int(subset_fraction * len(dataset)))
     subset = Subset(dataset, subset_indices)
     dl = DataLoader(subset, batch_size=bs, num_workers=num_workers, persistent_workers= persistent_workers,  shuffle = (stage == 'train'))

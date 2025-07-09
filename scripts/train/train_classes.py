@@ -10,6 +10,8 @@ from torch import Tensor, einsum
 from pytorch_lightning import seed_everything
 import segmentation_models_pytorch as smp
 import pytorch_lightning as pl
+import csv
+import logging
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.callbacks import ModelCheckpoint,EarlyStopping
 # from iglovikov_helper_functions.dl.pytorch.lightning import find_average
@@ -36,7 +38,7 @@ from scripts.train.train_functions import plot_auc_pr
 
 
 
-class FloodDataset(Dataset):
+class FloodDataset_from_multiband(Dataset):
     def __init__(self, tile_list, tile_root, stage='train', inputs=None):
         with open(tile_list, 'r') as _in:
             sample_list = _in.readlines()
@@ -124,6 +126,153 @@ class FloodDataset(Dataset):
         # input_tensor = torch.stack([model_input, mask], dim=0)  # Shape: (2, 256, 256)
         return [model_input, mask]
         # return model_input.float(), val_mask.float()
+
+class FloodDataset(Dataset):
+    def __init__(self, tile_list, tile_root, stage='train', inputs=None):
+        with open(tile_list, 'r') as _in:
+            sample_list = _in.readlines()
+        self.sample_list = [t[:-1] for t in sample_list]
+        
+        if stage == 'train':
+            self.tile_root = Path(tile_root, 'train')
+        elif stage == 'test':
+            self.tile_root = Path(tile_root, 'test')
+        elif stage == 'val':
+            self.tile_root = Path(tile_root, 'val')
+        self.inputs = inputs
+
+    # This returns the total amount of samples in your Dataset
+    def __len__(self):
+        return len(self.sample_list)
+    
+    # This returns given an index the i-th sample and label
+    def __getitem__(self, idx):
+        # print(f'+++++++++++++++++++ get item')
+
+        filename = self.sample_list[idx]
+        if  filename.endswith('.json'):
+            raise ValueError(f"Unexpected filename: {filename}")
+        file_path = Path(self.tile_root, filename)
+        # Use rasterio to inspect layer descriptions and dynamically select layers
+        try:
+            with rasterio.open(file_path) as src:
+                layer_descriptions = src.descriptions  # Get layer descriptions
+                # print(f"Layer Descriptions: {layer_descriptions}")  # Debugging
+
+                # Ensure descriptions are present
+                if not layer_descriptions:
+                    raise ValueError(f"No layer descriptions found in {file_path}")
+
+                # Dynamically select layers based on their descriptions
+                hh_index = layer_descriptions.index('hh')  # Index of 'hh' layer
+                mask_index = layer_descriptions.index('mask')  # Index of 'mask' layer
+
+                # Read only the required layers
+                hh = src.read(hh_index + 1)  # Rasterio uses 1-based indexing
+                mask = src.read(mask_index + 1)
+        except Exception as e:
+            print(f"Error reading file {file_path}: {e}")
+            raise
+        # tile = tiff.imread(Path(self.tile_root, filename))
+
+        # print tile info and shape
+        # print(f"---Tile shape b4 permute: {tile.shape}")
+
+        # Transpose to (C, H, W)
+        # tile = torch.tensor(tile, dtype=torch.float32).permute(2, 0, 1)  # Shape: (2, 256, 256)
+
+        # print(f"---Tile shape after permute: {tile.shape}")
+
+        # Ensure the tile has 2 channels
+        # assert tile.shape[0] == 2, f"Unexpected number of channels: {tile.shape[0]}"    
+        # Select channels based on `inputs` list position
+        # input_idx = list(range(len(self.inputs)))
+        # model_input = tile[input_idx, :, : ]  # auto select the channels
+        # model_input = tile[:1, :, : ].clone()  # auto select the channels
+        model_input = torch.tensor(hh, dtype=torch.float32).unsqueeze(0)  # Add a channel dimension
+
+        # print(f"---model_input shape: {model_input.shape}")  # Should print torch.Size([batch_size, 2, 256, 256])  
+
+
+        # CONVERT TO TENSOR
+        mask = torch.tensor(mask,dtype=torch.float32).unsqueeze(0)  # Add a channel dimension
+        mask = (mask > 0.5).float()
+
+        # print(f"---mask shape: {mask.shape}")  # Should print torch.Size([batch_size, 1, 256, 256])
+
+        assert mask.shape == (1, 256, 256), f"Unexpected mask shape: {mask.shape}"
+
+        # Debugging: Check unique values in the mask
+        # print("---Unique values in mask:", torch.unique(mask))
+
+        # Combine HH and MASK into a single input tensor
+        # input_tensor = torch.stack([model_input, mask], dim=0)  # Shape: (2, 256, 256)
+        return [model_input, mask]
+        # return model_input.float(), val_mask.float()
+
+
+class Sen1Floods11Dataset(Dataset):
+    def __init__(self, csv_path: Path, root_dir: Path,
+                 db_min: float = -30.0, db_max: float = 0.0):
+        """
+        csv_path: Path to one of the split CSVs (train.csv / val.csv / test.csv)
+        root_dir: Path to the v1.1/data/ folder
+        """
+        self.root = root_dir
+        self.db_min = db_min
+        self.db_max = db_max
+
+        # Read CSV → two parallel lists of Paths
+        self.img_paths  = []
+        self.mask_paths = []
+        with open(csv_path, newline='') as f:
+            reader = csv.DictReader(f)
+            # assume the columns are named exactly "image" and "mask"
+            for row in reader:
+                img_rel, mask_rel = row[0], row[1]
+                self.img_paths.append(self.root / img_rel)
+                self.mask_paths.append(self.root / mask_rel)
+
+        if len(self.img_paths) != len(self.mask_paths):
+            raise ValueError(
+                f"Split file {csv_path} has {len(self.img_paths)} images "
+                f"but {len(self.mask_paths)} masks."
+            )
+
+    def __len__(self):
+        return len(self.img_paths)
+
+    def __getitem__(self, idx):
+        # 1) Load VV & VH
+        img_fp = self.img_paths[idx]
+        with rasterio.open(img_fp) as src:
+            vv = src.read(1).astype(np.float32)
+            vh = src.read(2).astype(np.float32)
+
+        # 3) Clip & normalize
+        vv = np.clip(vv, self.db_min, self.db_max)
+        vh = np.clip(vh, self.db_min, self.db_max)
+        vv = (vv - self.db_min) / (self.db_max - self.db_min)
+        vh = (vh - self.db_min) / (self.db_max - self.db_min)
+
+        img = np.stack([vv, vh], axis=0)  # shape [2,H,W]
+
+        # 4) Load & binarize mask
+        with rasterio.open(self.mask_paths[idx]) as src:
+            m = src.read(1)
+        mask = (m == 1).astype(np.float32)[None, ...]  # shape [1,H,W]
+
+        return [torch.from_numpy(img), torch.from_numpy(mask)]
+
+# ——— USAGE ———
+
+root = Path("/path/to/v1.1/data")
+train_ds = Sen1Floods11Dataset(root/"train.csv", root)
+val_ds   = Sen1Floods11Dataset(root/"val.csv",   root)
+test_ds  = Sen1Floods11Dataset(root/"test.csv",  root)
+
+train_loader = DataLoader(train_ds, batch_size=8, shuffle=True, num_workers=4)
+val_loader   = DataLoader(val_ds,   batch_size=8, shuffle=False, num_workers=4)
 
 
 class Segmentation_training_loop(pl.LightningModule):

@@ -88,17 +88,18 @@ def main(train, test):
     torch.set_float32_matmul_precision('medium')
     pl.seed_everything(42, workers=True)
 
-    ###########################################################
+    #......................................................
     # PATHS DEFINITIONS ANd CONSTANTS
     repo_root = Path(__file__).resolve().parents[2]
     logger.info(f"repo root: {repo_root}")
     env_file = repo_root / ".env"
-    dataset_path = repo_root / "data" / "4final" / "train_INPUT"
+    dataset_path = repo_root / "data" / "4final" / "train_input"
     if test:
-        dataset_path = repo_root / "data" / "4final" / "test_INPUT"
+        dataset_path = repo_root / "data" / "4final" / "test_input"
 
-    test_ckpt_path = repo_root / "checkpoints" / "ckpt_INPUT"
+    test_ckpt_path = repo_root / "checkpoints" / "ckpt_input"
     save_path = repo_root / "results"
+
     project = "mac_py_package"
     subset_fraction = 1
     bs = 8
@@ -109,14 +110,14 @@ def main(train, test):
     WBOFFLINE = False
     LOGSTEPS = 50
     PRETRAINED = True
-    inputs = ['hh', 'mask']
+    inputs = ['vv', 'vh', 'mask']
     in_channels = 1
     DEVRUN = 0
     user_loss = 'bce_dice' #'smp_bce' # 'bce_dice' #'focal' # 'bce_dice' # focal'
     focal_alpha = 0.8
     focal_gamma = 8
     bce_weight = 0.35 # FOR BCE_DICE
-    ###########################################################
+    #.......................................................
 
     if env_file.exists():
         load_dotenv(env_file)
@@ -141,9 +142,9 @@ def main(train, test):
     # run_name = 'sweep1'
 
         # Dataset Lists
-    train_list = dataset_path / "train.txt"
-    val_list = dataset_path / "val.txt"
-    test_list = dataset_path / "test.txt"
+    train_list = dataset_path / "flood_train_data.csv"
+    val_list = dataset_path / "flood_val_data.csv"
+    test_list = dataset_path / "flood_test_data.csv"
 
         # Initialize W&B using your custom function
     wandb_config = {
@@ -182,6 +183,21 @@ def main(train, test):
         logger.info(">>> IN SWEEP MODE <<<")
     
     persistent_workers = num_workers > 0
+
+    if job_type == "train":
+        train_list = train_list
+    elif job_type == "val":
+        val_list = val_list
+    elif job_type == "test":
+        test_list = test_list
+    
+
+    # dl = create_subset(file_list, dataset_path, job_type, subset_fraction, inputs, bs, num_workers, persistent_workers)
+    # ckpt_to_test = next(test_ckpt_path.rglob("*.ckpt"), None)
+    # if ckpt_to_test is None:
+    #     raise FileNotFoundError(f"No checkpoint found in {test_ckpt_path}")
+
+
     if job_type == "train":
         logger.info(">>> Creating data loaders")
         train_dl = create_subset(train_list, dataset_path, 'train', subset_fraction, inputs, bs, num_workers, persistent_workers)
