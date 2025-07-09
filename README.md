@@ -2,7 +2,7 @@ This document is still under development, and parts stilll refer to FloodAI_V2 u
 
 # InferSAR
 
-INFERSAR is a lightweight field tool developed from FloodAI_V2, itself originally developed for the United Nations Satellite Centre (UNOSAT) to support rapid, high-accuracy flood mapping during emergency response operations. It was created from scratch as a fully modular, maintainable, and scalable codebase, designed to integrate smoothly into operational workflows. Optimized for very high-resolution Synthetic Aperture Radar (SAR) imagery such as TerraSAR-X, it also supports additional geospatial inputs like Digital Elevation Models (DEM) and terrain slope for improved segmentation performance in complex landscapes. Built on PyTorch Lightning, the system includes GPU-accelerated training, flexible architecture support, and seamless logging via Weights & Biases.
+INFERSAR is a lightweight field tool developed from FloodAI_V2, itself originally developed for the United Nations Satellite Centre (UNOSAT) to support rapid, high-accuracy flood mapping during emergency response operations. It was created from scratch as a fully modular, maintainable, and scalable codebase, designed to integrate smoothly into operational workflows. Existing preprocess code structure is optimised for training on the Sen1Floods11 dataset, but it also supports additional geospatial inputs like Digital Elevation Models (DEM) and terrain slope for improved segmentation performance in complex landscapes. Built on PyTorch Lightning, the system includes GPU-accelerated training, flexible architecture support, and seamless logging via Weights & Biases.
 
 This repository hosts a continued, independently maintained version of FloodAI-V2, incorporating enhancements and adaptations beyond the original scope.
 
@@ -71,3 +71,14 @@ Takes an unescaped  backslashed windows path for the input SAR file, input analy
 Takes threshold and tilesize. (0 to 1) and (256 or 512) respectively
 Takes a file name - this is appended to the already added datatype, filename, tilesize, threshold.
  
+ ## PREPROCESSING
+
+ run_process.py
+ Use this to prepare raw training data:
+ -Prepare geotifs
+ -create datacubes for each scene/event
+ -create normalized tiles from the datacubes
+
+DATASET FOLDER
+A collection of folders (events).
+Each event has 
