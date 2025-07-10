@@ -15,10 +15,10 @@ from scripts.train.train_helpers import nsd
 
 logger = logging.getLogger(__name__)
 
-def create_subset(file_list, event, stage,  subset_fraction , inputs, bs, num_workers, persistent_workers):
+def create_subset(file_list, dataset_pth, stage,  subset_fraction , inputs, bs, num_workers, persistent_workers, input_is_linear):
     from scripts.train.train_classes import Sen1Floods11Dataset
 
-    dataset = Sen1Floods11Dataset(file_list, event)    
+    dataset = Sen1Floods11Dataset(file_list, dataset_pth, input_is_linear )    
     subset_indices = random.sample(range(len(dataset)), int(subset_fraction * len(dataset)))
     subset = Subset(dataset, subset_indices)
     dl = DataLoader(subset, batch_size=bs, num_workers=num_workers, persistent_workers= persistent_workers,  shuffle = (stage == 'train'))
@@ -70,7 +70,7 @@ def handle_interrupt(signal, frame):
     '''
     usage: signal.signal(signal.SIGINT, handle_interrupt)
     '''
-    print("Interrupt received! Cleaning up...")
+    logger.info("Interrupt received! Cleaning up...")
     # Add any necessary cleanup code here (e.g., saving model checkpoints)
     sys.exit(0)
 
@@ -90,7 +90,7 @@ def loss_chooser(loss_name, alpha=0.25, gamma=2.0, bce_weight=0.5):
     '''
 
     if loss_name == "focal":
-        print(f'---alpha: {alpha}, gamma: {gamma}---')  
+        logger.info(f'---alpha: {alpha}, gamma: {gamma}---')  
 
     torch_bce = torch.nn.BCEWithLogitsLoss()
     smp_bce =  smp.losses.SoftBCEWithLogitsLoss()
@@ -112,7 +112,7 @@ def loss_chooser(loss_name, alpha=0.25, gamma=2.0, bce_weight=0.5):
         return focal
 
     if loss_name == "bce_dice":
-        print(f'---loss chooser returning bce_dice with weight: {bce_weight}---')
+        logger.info(f'---loss chooser returning bce_dice with weight: {bce_weight}---')
         return bce_dice
 
     # THESE 3 NEED PREDS > PROBS
@@ -127,14 +127,17 @@ def loss_chooser(loss_name, alpha=0.25, gamma=2.0, bce_weight=0.5):
         raise ValueError(f"Unknown loss: {loss_name}")
     
 
-def wandb_initialization(job_type, repo_path, project, dataset_name, run_name, train_list, val_list, test_list, wandb_config):
+def wandb_initialization(job_type, repo_path, project, dataset_name, run_name, train_list, val_list, test_list, wandb_config, wandb_online):
     """
     Initialize W&B and return a WandbLogger for PyTorch Lightning.
     Handles dataset artifacts for 'train', 'test', and 'reproduce' jobs.
     """
-    # Set default parameters
-    mode = 'online'
 
+    if  wandb_online:
+        mode = 'online'
+    else:
+        mode = 'offline'
+        logger.info(f"--- WandB is: {mode} ---")
     # Update parameters based on job type
     if job_type == "reproduce":
         artifact_dataset_name = f'unosat_emergencymapping-United Nations Satellite Centre/{project}/{dataset_name}/{dataset_name}'
@@ -166,11 +169,11 @@ def wandb_initialization(job_type, repo_path, project, dataset_name, run_name, t
         # Add references
 
         # turn your train_list (str or Path) into a proper file:// URI
-        logger.info(f">>> train_list: {train_list}")
+        # logger.info(f">>> train_list: {train_list}")
         p = Path(train_list).expanduser().resolve()
-        logger.info(f">>> train_list resolved: {p}")
+        # logger.info(f">>> train_list resolved: {p}")
         train_list_uri = p.as_uri()
-        logger.info(f">>> train_list_uri: {train_list_uri}")
+        # logger.info(f">>> train_list_uri: {train_list_uri}")
         # data_artifact = mlflow.data.DataArtifact()  # or however you construct it
         data_artifact.add_reference(train_list_uri, name="train_list")
         run.log_artifact(data_artifact, aliases=[dataset_name])
@@ -179,7 +182,7 @@ def wandb_initialization(job_type, repo_path, project, dataset_name, run_name, t
         # Retrieve dataset artifact
         data_artifact = run.use_artifact(artifact_dataset_name)
         metadata_data = data_artifact.metadata
-        print(">>> Current Artifact Metadata:", metadata_data)
+        logger.info(">>> Current Artifact Metadata:", metadata_data)
 
         # Update dataset paths
         train_list = Path(metadata_data.get('train_list', train_list))
@@ -188,11 +191,11 @@ def wandb_initialization(job_type, repo_path, project, dataset_name, run_name, t
 
         # Warn if any path is missing
         if not train_list.exists():
-            print(f"Warning: train_list path {train_list} does not exist.")
+            logger.info(f"Warning: train_list path {train_list} does not exist.")
         if not val_list.exists():
-            print(f"Warning: val_list path {val_list} does not exist.")
+            logger.info(f"Warning: val_list path {val_list} does not exist.")
         if not test_list.exists():
-            print(f"Warning: test_list path {test_list} does not exist.")
+            logger.info(f"Warning: test_list path {test_list} does not exist.")
 
     # Return WandbLogger for PyTorch Lightning
     return WandbLogger(experiment=run)

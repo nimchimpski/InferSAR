@@ -71,14 +71,14 @@ signal.signal(signal.SIGINT, handle_interrupt)
 def main(train, test):
 
     device = pick_device()                       
-    logger.info(f">>> Using device: {device}")
+    logger.info(f" Using device: {device}")
 
     if test and train:
         raise ValueError("You can only specify one of --train or --test.")
     train = True
     if  test:
         train = False
-        logger.info('>>> ARE YOU TESTING THE CORRECT CKPT? <<<')
+        logger.info(' ARE YOU TESTING THE CORRECT CKPT? <<<')
 
     job_type = "train" if train else "test"
     logger.info(f"train={train}, test={test}")
@@ -93,7 +93,7 @@ def main(train, test):
     repo_root = Path(__file__).resolve().parents[2]
     logger.info(f"repo root: {repo_root}")
     env_file = repo_root / ".env"
-    dataset_path = repo_root / "data" / "4final" / "train_input" / "datasetname"
+    dataset_path = repo_root / "data" / "4final" / "train_input" 
     if test:
         dataset_path = repo_root / "data" / "4final" / "test_input"
 
@@ -101,13 +101,15 @@ def main(train, test):
     save_path = repo_root / "results"
 
     project = "mac_py_package"
+    dataset_name = "sen1floods11"  # "sen1floods11" or "copernicus_floods"
+    input_is_linear = False   # True for copernicus direct downloads, False for Sen1floods11
     subset_fraction = 1
     bs = 8
     max_epoch =15
     early_stop = False
     patience=10
     num_workers = 8
-    WBOFFLINE = False
+    WandB_online = False
     LOGSTEPS = 50
     PRETRAINED = True
     inputs = ['vv', 'vh', 'mask']
@@ -119,18 +121,13 @@ def main(train, test):
     bce_weight = 0.35 # FOR BCE_DICE
     #.......................................................
 
+    persistent_workers = num_workers > 0
+
+
     if env_file.exists():
         load_dotenv(env_file)
     else:
-        logger.info(">>>Warning: .env not found; using shell environment")
-    # Dataset Setup
-    # input_folders = [i for i in dataset_path.iterdir() if i.is_dir() and not i.name.startswith(".")]
- 
-    # logger.info(f">>>Input folders: {input_folders}")
-    # assert len(input_folders) == 1
-    dataset_name = dataset_path.name
-    # dataset_path = dataset_path / dataset_name
-    logger.info(f">>>Dataset: {dataset_path}")
+        logger.info("Warning: .env not found; using shell environment")
 
     if user_loss != 'focal':
         focal_alpha = None
@@ -139,14 +136,13 @@ def main(train, test):
         bce_weight = None
 
     run_name = "_"
-    # run_name = 'sweep1'
 
         # Dataset Lists
     train_list = dataset_path / "flood_train_data.csv"
     val_list = dataset_path / "flood_valid_data.csv"
     test_list = dataset_path / "flood_test_data.csv"
 
-        # Initialize W&B using your custom function
+        #####       WAND INITIALISEATION + CONFIG       ###########
     wandb_config = {
         "name": run_name,
         "dataset_name": dataset_name,
@@ -158,11 +154,12 @@ def main(train, test):
         "bce_weight": bce_weight,
         "max_epoch": max_epoch,
     }
-    wandb_logger = wandb_initialization(job_type, repo_root, project, dataset_name, run_name,train_list, val_list, test_list, wandb_config)
+    wandb_logger = wandb_initialization(job_type, repo_root, project, dataset_name, run_name,train_list, val_list, test_list, wandb_config, WandB_online)
 
     config = wandb.config
 
     logger.info(f"---Current config: {wandb.config}")
+
     if user_loss == "focal":
         logger.info(f"---focal_alpha: {wandb.config.get('focal_alpha', 'Not Found')}")
         logger.info(f"---focal_gamma: {wandb.config.get('focal_gamma', 'Not Found')}")
@@ -171,18 +168,16 @@ def main(train, test):
         loss_desc = f"{user_loss}_{config.bce_weight}"
     else:
         loss_desc = user_loss
-            
 
     run_name = f"{dataset_name}_{timestamp}_BS{config.batch_size}_s{config.subset_fraction}_{loss_desc}"  
-
     wandb.run.name = run_name
     # wandb.run.save()
     logger.info(f"---config.name: {config.name}")
-
     if is_sweep_run():
-        logger.info(">>> IN SWEEP MODE <<<")
-    
-    persistent_workers = num_workers > 0
+        logger.info(" IN SWEEP MODE <<<")
+    #........................................................
+
+    #########    CREATE DATA LOADERS    #########
 
     # if job_type == "train":
     #     train_list = train_list
@@ -199,30 +194,33 @@ def main(train, test):
 
 
     # if job_type == "train":
-    #     logger.info(">>> Creating data loaders")
+    #     logger.info(" Creating data loaders")
     #     train_dl = create_subset(train_list, dataset_path, 'train', subset_fraction, inputs, bs, num_workers, persistent_workers)
     #     val_dl = create_subset(val_list, dataset_path, 'val', subset_fraction, inputs, bs, num_workers, persistent_workers)
 
+
     if job_type == "train":
-        logger.info(">>> Creating data loaders")
-        train_dl = create_subset(train_list, dataset_path, 'train', subset_fraction, inputs, bs, num_workers, persistent_workers)
-        val_dl = create_subset(val_list, dataset_path, 'val', subset_fraction, inputs, bs, num_workers, persistent_workers)
+        logger.info(" Creating data loaders")
+        train_dl = create_subset(train_list, dataset_path, 'train', subset_fraction, inputs, bs, num_workers, persistent_workers, input_is_linear)
+        val_dl = create_subset(val_list, dataset_path, 'val', subset_fraction, inputs, bs, num_workers, persistent_workers, input_is_linear)
 
     if test:
-        test_dl = create_subset(test_list, dataset_path, 'test', subset_fraction, inputs, bs, num_workers, persistent_workers)
+        test_dl = create_subset(test_list, dataset_path, 'test', subset_fraction, inputs, bs, num_workers, persistent_workers, input_is_linear)
         ckpt_to_test = next(test_ckpt_path.rglob("*.ckpt"), None)
         if ckpt_to_test is None:
             raise FileNotFoundError(f"No checkpoint found in {test_ckpt_path}")
-    # Model Initialization
+        
+    ########     INITIALISE THE MODEL     #########
     model = UnetModel(encoder_name='resnet34', in_channels=in_channels, classes=1, pretrained=PRETRAINED).to(device)
 
+    ########.     CHOOE LOSS FUNCTION     #########
     loss_fn = loss_chooser(user_loss, config.focal_alpha, config.focal_gamma, config.bce_weight)
     early_stopping = pl.callbacks.EarlyStopping(
         monitor="val_loss",
         patience=patience,  # Stop if no improvement for 3 consecutive epochs
         mode="min",
     )
-    # Trainer Setup
+    ###########    SETUP TRAINING LOOP    #########
     ckpt_dir = repo_root / "5checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_callback = ModelCheckpoint(
@@ -257,7 +255,7 @@ def main(train, test):
         if device.type == "cuda"
         else 32
     )
-
+    
     trainer = pl.Trainer(
         logger=wandb_logger,
         log_every_n_steps=LOGSTEPS,
@@ -270,16 +268,13 @@ def main(train, test):
         callbacks=callbacks,
     )
 
-
-
-
     # Training or Testing
     if train:
-        logger.info(">>> Starting training")
+        logger.info(" Starting training")
         training_loop = Segmentation_training_loop(model, loss_fn, save_path, user_loss)
         trainer.fit(training_loop, train_dataloaders=train_dl, val_dataloaders=val_dl)
     elif test:
-        logger.info(f">>> Starting testing with checkpoint: {ckpt_to_test}")
+        logger.info(f" Starting testing with checkpoint: {ckpt_to_test}")
         training_loop = Segmentation_training_loop.load_from_checkpoint(
             ckpt_to_test, model=model, loss_fn=loss_fn, save_path=save_path
         )
@@ -287,7 +282,7 @@ def main(train, test):
 
     # Cleanup
     run_time = (time.time() - start) / 60
-    logger.info(f">>> Total runtime: {run_time:.2f} minutes")
+    logger.info(f" Total runtime: {run_time:.2f} minutes")
     wandb.finish()
     if device.type == "cuda":
         torch.cuda.empty_cache()
