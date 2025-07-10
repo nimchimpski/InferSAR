@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 def create_subset(file_list, dataset_pth, stage,  subset_fraction , inputs, bs, num_workers, persistent_workers, input_is_linear):
     from scripts.train.train_classes import Sen1Floods11Dataset
 
-    dataset = Sen1Floods11Dataset(file_list, dataset_pth, input_is_linear )    
+    dataset = Sen1Floods11Dataset(file_list, dataset_pth, input_is_linear )   
     subset_indices = random.sample(range(len(dataset)), int(subset_fraction * len(dataset)))
     subset = Subset(dataset, subset_indices)
     dl = DataLoader(subset, batch_size=bs, num_workers=num_workers, persistent_workers= persistent_workers,  shuffle = (stage == 'train'))
@@ -99,7 +99,7 @@ def loss_chooser(loss_name, alpha=0.25, gamma=2.0, bce_weight=0.5):
     # Adjust alpha if one class dominates or struggles.
     # Adjust gamma to fine-tune focus on hard examples
 
-    def bce_dice(preds, targets):
+    def bce_dice(preds, targets, valids):
         preds_prob = torch.sigmoid(preds)  # Convert logits to probabilities for Dice Loss
         return bce_weight * smp_bce(preds, targets) + (1 - bce_weight) * dice(preds_prob, targets)
     
@@ -110,7 +110,6 @@ def loss_chooser(loss_name, alpha=0.25, gamma=2.0, bce_weight=0.5):
         return smp_bce
     if loss_name == "focal": # no weighting
         return focal
-
     if loss_name == "bce_dice":
         logger.info(f'---loss chooser returning bce_dice with weight: {bce_weight}---')
         return bce_dice

@@ -260,15 +260,20 @@ class Sen1Floods11Dataset(Dataset):
 
         #  Clip & normalize
         for arr in (vv, vh):
+
             #  CHECK IF LINEAR OR DB
             if self.input_is_linear:
                 # logging.info(f"Input is linear")
-                arr = np.clip(arr, 1e-6, None)
-                arr = 10 * np.log10(arr)
+                np.clip(arr, 1e-6, None, out=arr)  # floor zeros
+                np.log10(arr, out=arr)
+                arr *= 10.0  # convert to dB
             # elif not self.input_is_linear:
             #     logging.info(f"Input is in dB")
-            #  floor zeros
-            np.clip(arr, 1e-6, None, out=arr)
+            arr = np.nan_to_num(arr,
+                               copy=False,           # modify vv in-place
+                               nan=self.db_min,
+                               posinf=self.db_max,
+                               neginf=self.db_min)
             #  global clip
             np.clip(arr, self.db_min, self.db_max, out=arr)
             #  scale to [0,1]
@@ -280,10 +285,10 @@ class Sen1Floods11Dataset(Dataset):
         # 2) Load & binarize mask
         msk_pth = self.root/'LabelHand'/self.mask_paths[idx]
         with rasterio.open(msk_pth) as src:
-            m = src.read(1)
-        mask = (m == 1).astype(np.float32)[None, ...]  # shape [1,H,W]
-
-        return [torch.from_numpy(img), torch.from_numpy(mask)]
+            raw = src.read(1).astype(np.int64)
+            valid_mask = (raw != -1).astype(np.float32)[None, ...]   # [1,H,W]
+            flood_mask = (raw ==  1).astype(np.float32)[None, ...]
+        return (torch.from_numpy(img), torch.from_numpy(flood_mask), torch.from_numpy(valid_mask))
 
 
 class Segmentation_training_loop(pl.LightningModule):
@@ -317,15 +322,15 @@ class Segmentation_training_loop(pl.LightningModule):
         # logger.info(f'+++++++++++++++++++   training step') 
         job_type = 'train'
 
-        images, masks = batch
+        images, masks, valids = batch
         # DEBUGGING
         if torch.isnan(images).any() or torch.isinf(images).any():
             logger.info(f"TRAIN STEP - Batch {batch_idx} - Input contains NaN or Inf")
             logger.info(f"Mean: {images.mean()}, Std: {images.std()}, Min: {images.min()}, Max: {images.max()}")
             raise ValueError(f"Input contains NaN or Inf at batch {batch_idx}")
-        images, masks = images.to(self.device), masks.to(self.device)
+        images, masks, valids = images.to(self.device), masks.to(self.device), valids.to(self.device)
         logits = self(images)
-        loss_per_pixel = self.loss_fn(logits, masks)  
+        loss_per_pixel = self.loss_fn(logits, masks, valids)  
         # ONLY APPLIES DYNAMIC WEIGHTS TO BCE LOSS
         loss, dynamic_weights = self.dynamic_weight_chooser(masks, loss_per_pixel, self.user_loss)
         # logger.info(f'---used dynamic weights = {dynamic_weights}')
@@ -340,14 +345,14 @@ class Segmentation_training_loop(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         # logger.info(f'+++++++++++++    validation step')
         job_type = 'val'
-        images, masks = batch
+        images, masks, valids = batch
         # DEBUGGING
         if torch.isnan(images).any() or torch.isinf(images).any():
             logger.info(f"VAl STEP - Batch {batch_idx} - Input contains NaN or Inf")
             logger.info(f"Mean: {images.mean()}, Std: {images.std()}, Min: {images.min()}, Max: {images.max()}")
             raise ValueError(f"Input contains NaN or Inf at batch {batch_idx}")
 
-        images, masks = images.to(self.device), masks.to(self.device)
+        images, masks, valids = images.to(self.device), masks.to(self.device), valids.to(self.device)
         logits = self(images)
 
         # logger.info(f"---Validation Step {batch_idx}: logits shape={logits.shape}, masks shape={masks.shape}")
@@ -358,13 +363,13 @@ class Segmentation_training_loop(pl.LightningModule):
             raise ValueError(f"Logits contain NaN or Inf at batch {batch_idx}")
         
         self.validation_outputs.append({'logits': logits, 'masks': masks})  # Store outputs
-        loss_per_pixel = self.loss_fn(logits, masks)
+        loss_per_pixel = self.loss_fn(logits, masks, valids)
         loss, dynamic_weights = self.dynamic_weight_chooser(masks, loss_per_pixel, self.user_loss)
         assert logits.device == masks.device
         # Check if this is the last batch and save visualization
         val_dataloader = self.trainer.val_dataloaders
         total_batches = len(val_dataloader) 
-        # logger.info(f"---Total batches: {total_batches}")
+        logger.info(f"---Total batches: {total_batches}")
         # is logit a prob?
 
         if self.current_epoch == self.trainer.max_epochs - 1 and batch_idx == 1:
@@ -779,7 +784,7 @@ def log_combined_visualization_plt(self, preds, mask):
 # MODELS
 
 class UnetModel(nn.Module):
-    def __init__(self,encoder_name='resnet34', in_channels=1, classes=1, pretrained=True):
+    def __init__(self,encoder_name='resnet34', in_channels=2, classes=1, pretrained=True):
         super().__init__()
         self.model= smp.Unet(
             encoder_name=encoder_name, 
@@ -790,7 +795,7 @@ class UnetModel(nn.Module):
         
         # Fix the first convolutional layer
         self.model.encoder.conv1 = nn.Conv2d(
-            in_channels=1,     # Match your input channel count
+            in_channels=in_channels,     # Match your input channel count
             out_channels=64,   # Keep the same number of filters
             kernel_size=7, 
             stride=2, 

@@ -113,7 +113,7 @@ def main(train, test):
     LOGSTEPS = 50
     PRETRAINED = True
     inputs = ['vv', 'vh', 'mask']
-    in_channels = 1
+    in_channels = 2
     DEVRUN = 0
     user_loss = 'bce_dice' #'smp_bce' # 'bce_dice' #'focal' # 'bce_dice' # focal'
     focal_alpha = 0.8
@@ -267,6 +267,12 @@ def main(train, test):
         num_sanity_val_steps=2,
         callbacks=callbacks,
     )
+    # get info about train_dl
+
+    imgs, masks, valids = next(iter(train_dl))
+    print(imgs.shape, masks.shape, valids.shape)
+    # → torch.Size([B, 2, H, W]) torch.Size([B, 1, H, W]) torch.Size([B, 1, H, W])
+
 
     # Training or Testing
     if train:
