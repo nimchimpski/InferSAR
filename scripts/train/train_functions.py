@@ -6,6 +6,8 @@ import signal
 import random
 import matplotlib.pyplot as plt
 import logging
+import torch.nn.functional as F
+
 from pathlib import Path
 from pytorch_lightning.loggers import WandbLogger
 from torch.utils.data import Subset , Dataset, DataLoader
@@ -99,10 +101,40 @@ def loss_chooser(loss_name, alpha=0.25, gamma=2.0, bce_weight=0.5):
     # Adjust alpha if one class dominates or struggles.
     # Adjust gamma to fine-tune focus on hard examples
 
-    def bce_dice(preds, targets, valids):
+    def bce_dicexxx(preds, targets, valids):
         preds_prob = torch.sigmoid(preds)  # Convert logits to probabilities for Dice Loss
         return bce_weight * smp_bce(preds, targets) + (1 - bce_weight) * dice(preds_prob, targets)
-    
+
+    def bce_dice(
+        logits: torch.Tensor,          # [B,1,H,W] raw outputs
+        labels: torch.Tensor,          # [B,1,H,W] 0/1 flood mask
+        valid_mask: torch.Tensor,      # [B,1,H,W] 1 = valid pixel, 0 = ignore
+        eps: float = 1e-6,
+        ) -> torch.Tensor:
+        """Weighted BCE + Dice loss that ignores pixels where valid_mask == 0."""
+
+        # ----- BCE -----
+        bce_map = F.binary_cross_entropy_with_logits(
+            logits, labels, reduction="none"
+        )                                           # [B,1,H,W]
+        bce = (bce_map * valid_mask).sum() / (valid_mask.sum() + eps)
+
+        # ----- Dice -----
+        prob   = torch.sigmoid(logits)              # probabilities [0,1]
+        prob   = prob   * valid_mask               # mask invalid
+        label  = labels * valid_mask
+
+        prob_f  = prob.view(prob.size(0), -1)       # flatten [B,N]
+        label_f = label.view(label.size(0), -1)
+
+        intersection = (prob_f * label_f).sum(1)
+        union        = prob_f.sum(1) + label_f.sum(1)
+        dice_loss    = 1 - (2 * intersection + eps) / (union + eps)
+        dice         = dice_loss.mean()
+
+        # ----- Combine -----
+        return bce_weight * bce + (1.0 - bce_weight) * dice
+
 
     if loss_name == "torch_bce":
         return torch_bce        
