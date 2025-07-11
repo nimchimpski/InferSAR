@@ -95,17 +95,17 @@ def loss_chooser(loss_name, alpha=0.25, gamma=2.0, bce_weight=0.5):
         logger.info(f'---alpha: {alpha}, gamma: {gamma}---')  
 
     torch_bce = torch.nn.BCEWithLogitsLoss()
-    smp_bce =  smp.losses.SoftBCEWithLogitsLoss()
-    dice = smp.losses.DiceLoss(mode='binary')
+    smp_bce =  smp.losses.SoftBCEWithLogitsLoss(ignore_index=255, reduction='mean')  # ignore_index=255 is used to ignore pixels where the mask is not valid (e.g., no data)
+    dice = smp.losses.DiceLoss(mode='binary', from _logits=True, ignore_index=255)  # from_logits=True means the input is raw logits, not probabilities
     focal = smp.losses.FocalLoss(mode='binary', alpha=alpha, gamma=gamma)
     # Adjust alpha if one class dominates or struggles.
     # Adjust gamma to fine-tune focus on hard examples
 
-    def bce_dicexxx(preds, targets, valids):
+    def bce_dice(preds, targets):
         preds_prob = torch.sigmoid(preds)  # Convert logits to probabilities for Dice Loss
         return bce_weight * smp_bce(preds, targets) + (1 - bce_weight) * dice(preds_prob, targets)
 
-    def bce_dice(
+    def bce_dice_valid(
         logits: torch.Tensor,          # [B,1,H,W] raw outputs
         labels: torch.Tensor,          # [B,1,H,W] 0/1 flood mask
         valid_mask: torch.Tensor,      # [B,1,H,W] 1 = valid pixel, 0 = ignore
