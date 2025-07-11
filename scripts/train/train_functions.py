@@ -17,10 +17,10 @@ from scripts.train.train_helpers import nsd
 
 logger = logging.getLogger(__name__)
 
-def create_subset(file_list, dataset_pth, stage,  subset_fraction , inputs, bs, num_workers, persistent_workers, input_is_linear):
-    from scripts.train.train_classes import Sen1Floods11Dataset
+def create_subset(mode, file_list, dataset_pth, stage,  subset_fraction , bs, num_workers, persistent_workers, input_is_linear):
+    from scripts.train.train_classes import Sen1Dataset
 
-    dataset = Sen1Floods11Dataset(file_list, dataset_pth, input_is_linear )   
+    dataset = Sen1Dataset(mode, file_list, dataset_pth, input_is_linear )   
     subset_indices = random.sample(range(len(dataset)), int(subset_fraction * len(dataset)))
     subset = Subset(dataset, subset_indices)
     dl = DataLoader(subset, batch_size=bs, num_workers=num_workers, persistent_workers= persistent_workers,  shuffle = (stage == 'train'))
@@ -96,7 +96,7 @@ def loss_chooser(loss_name, alpha=0.25, gamma=2.0, bce_weight=0.5):
 
     torch_bce = torch.nn.BCEWithLogitsLoss()
     smp_bce =  smp.losses.SoftBCEWithLogitsLoss(ignore_index=255, reduction='mean')  # ignore_index=255 is used to ignore pixels where the mask is not valid (e.g., no data)
-    dice = smp.losses.DiceLoss(mode='binary', from _logits=True, ignore_index=255)  # from_logits=True means the input is raw logits, not probabilities
+    dice = smp.losses.DiceLoss(mode='binary', from_logits=True, ignore_index=255)  # from_logits=True means the input is raw logits, not probabilities
     focal = smp.losses.FocalLoss(mode='binary', alpha=alpha, gamma=gamma)
     # Adjust alpha if one class dominates or struggles.
     # Adjust gamma to fine-tune focus on hard examples

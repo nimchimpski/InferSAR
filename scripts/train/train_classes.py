@@ -213,9 +213,9 @@ class FloodDataset(Dataset):
         # return model_input.float(), val_mask.float()
 
 
-class Sen1Floods11Dataset(Dataset):
-    def __init__(self, csv_path: Path, root_dir: Path, input_is_linear: bool,
-                 db_min: float = -30.0, db_max: float = 0.0):
+class Sen1Dataset(Dataset):
+    def __init__(self, mode: str, csv_path: Path, root_dir: Path, input_is_linear: bool, 
+                 db_min: float = -30.0, db_max: float = 0.0, ):
         """
         csv_path: Path to one of the split CSVs (train.csv / val.csv / test.csv)
         root_dir: Path to the v1.1/data/ folder
@@ -224,10 +224,10 @@ class Sen1Floods11Dataset(Dataset):
         self.db_min = db_min
         self.db_max = db_max
         self.input_is_linear = input_is_linear
-
-        # Read CSV → two parallel lists of Paths
         self.img_paths  = []
         self.mask_paths = []
+        self.mode = mode
+        logger.info(f"---Dataset mode: {self.mode}")
         with open(csv_path, newline='') as f:
             reader = csv.reader(f)
             # assume the columns are named exactly "image" and "mask"
@@ -235,6 +235,7 @@ class Sen1Floods11Dataset(Dataset):
                 img_rel, mask_rel = row[0], row[1]
                 self.img_paths.append(self.root / 'S1Hand' / img_rel)
                 self.mask_paths.append(self.root / 'LabelHand' / mask_rel)
+            
 
         if len(self.img_paths) != len(self.mask_paths):
             raise ValueError(
@@ -258,6 +259,12 @@ class Sen1Floods11Dataset(Dataset):
         vv[~valid] = np.nan
         vh[~valid] = np.nan
 
+        if self.mode == 'train':
+            #  skip tile if >70% invalid
+            if np.sum(valid) < 0.3 * valid.size:
+                logger.info(f"Skipping tile {img_fp} due to too many invalid pixels.")
+                next_idx = (idx+1) % len(self)
+                return self.__getitem__(next_idx)
         #  Clip & normalize
         for arr in (vv, vh):
 
@@ -285,10 +292,10 @@ class Sen1Floods11Dataset(Dataset):
         # 2) Load & binarize mask
         msk_pth = self.root/'LabelHand'/self.mask_paths[idx]
         with rasterio.open(msk_pth) as src:
-            raw = src.read(1).astype(np.int64)
-            valid_mask = (raw != -1).astype(np.float32)[None, ...]   # [1,H,W]
-            flood_mask = (raw ==  1).astype(np.float32)[None, ...]
-        return (torch.from_numpy(img), torch.from_numpy(flood_mask), torch.from_numpy(valid_mask))
+            mask = src.read(1).astype(np.int64)
+            mask = np.where(mask ==  -1, 255, mask)
+            mask = torch.from_numpy(mask.astype(np.float32)).unsqueeze(0)  # Add a channel dimension
+        return (img, mask)
 
 
 class Segmentation_training_loop(pl.LightningModule):
@@ -322,15 +329,15 @@ class Segmentation_training_loop(pl.LightningModule):
         # logger.info(f'+++++++++++++++++++   training step') 
         job_type = 'train'
 
-        images, masks, valids = batch
+        images, masks = batch
         # DEBUGGING
         if torch.isnan(images).any() or torch.isinf(images).any():
             logger.info(f"TRAIN STEP - Batch {batch_idx} - Input contains NaN or Inf")
             logger.info(f"Mean: {images.mean()}, Std: {images.std()}, Min: {images.min()}, Max: {images.max()}")
             raise ValueError(f"Input contains NaN or Inf at batch {batch_idx}")
-        images, masks, valids = images.to(self.device), masks.to(self.device), valids.to(self.device)
+        images, masks = images.to(self.device), masks.to(self.device)
         logits = self(images)
-        loss_per_pixel = self.loss_fn(logits, masks, valids)  
+        loss_per_pixel = self.loss_fn(logits, masks)  
         # ONLY APPLIES DYNAMIC WEIGHTS TO BCE LOSS
         loss, dynamic_weights = self.dynamic_weight_chooser(masks, loss_per_pixel, self.user_loss)
         # logger.info(f'---used dynamic weights = {dynamic_weights}')
@@ -345,14 +352,14 @@ class Segmentation_training_loop(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         # logger.info(f'+++++++++++++    validation step')
         job_type = 'val'
-        images, masks, valids = batch
+        images, masks,  = batch
         # DEBUGGING
         if torch.isnan(images).any() or torch.isinf(images).any():
             logger.info(f"VAl STEP - Batch {batch_idx} - Input contains NaN or Inf")
             logger.info(f"Mean: {images.mean()}, Std: {images.std()}, Min: {images.min()}, Max: {images.max()}")
             raise ValueError(f"Input contains NaN or Inf at batch {batch_idx}")
 
-        images, masks, valids = images.to(self.device), masks.to(self.device), valids.to(self.device)
+        images, masks  = images.to(self.device), masks.to(self.device)
         logits = self(images)
 
         # logger.info(f"---Validation Step {batch_idx}: logits shape={logits.shape}, masks shape={masks.shape}")
@@ -363,7 +370,7 @@ class Segmentation_training_loop(pl.LightningModule):
             raise ValueError(f"Logits contain NaN or Inf at batch {batch_idx}")
         
         self.validation_outputs.append({'logits': logits, 'masks': masks})  # Store outputs
-        loss_per_pixel = self.loss_fn(logits, masks, valids)
+        loss_per_pixel = self.loss_fn(logits, masks)
         loss, dynamic_weights = self.dynamic_weight_chooser(masks, loss_per_pixel, self.user_loss)
         assert logits.device == masks.device
         # Check if this is the last batch and save visualization
@@ -371,6 +378,9 @@ class Segmentation_training_loop(pl.LightningModule):
         total_batches = len(val_dataloader) 
         logger.info(f"---Total batches: {total_batches}")
         # is logit a prob?
+
+        # remove the 255 dim from the images
+        images = images.squeeze(1)  # Remove the channel dimension if it's 1
 
         if self.current_epoch == self.trainer.max_epochs - 1 and batch_idx == 1:
         # This is the last epoch
@@ -430,6 +440,8 @@ class Segmentation_training_loop(pl.LightningModule):
         #     if batch_idx == 1:
         #         logger.info(f'---used dynamic weights = {dynamic_weights}')
 
+
+        
             # CALCULATE METRICS
         ioumean, precisionmean, recallmean, f1mean = self.metrics_maker(logits, masks, job_type, loss, self.user_loss)
 
@@ -531,7 +543,8 @@ class Segmentation_training_loop(pl.LightningModule):
 
             # logger.info(f"---Sample {i}")
             # Convert tensors to numpy
-            image = images[i].squeeze().cpu().numpy()
+            image = images[i].cpu().numpy()
+            image = image[0]
             pred = preds[i].squeeze().cpu().numpy()
             mask = masks[i].squeeze().cpu().numpy()
 
@@ -601,6 +614,11 @@ class Segmentation_training_loop(pl.LightningModule):
             logits_np = torch.sigmoid(all_logits).detach().cpu().numpy().flatten()
             labels_np = all_labels.detach().cpu().numpy().flatten()
 
+            # GET RID OF THE 255 INVALID CHANNEL
+            labels_np = labels_np != 255
+            if labels_np.sum() == 0:
+                raise ValueError("Validation batch contains only ignore pixels.")
+
             # DEBUGGING
             # Check for NaN or Inf values in logits_np and labels_np
             if not np.isfinite(logits_np).all():
@@ -609,7 +627,8 @@ class Segmentation_training_loop(pl.LightningModule):
                 raise ValueError("---labels_np contains NaN or Inf values.")
             logger.info(f"---Logits: Min={logits_np.min()}, Max={logits_np.max()}, Mean={logits_np.mean()}")
             logger.info(f"---Labels: Unique={np.unique(labels_np)}, Counts={np.bincount(labels_np.astype(int))}")
-            # Count unique classes
+
+            # COUNT UNIQUE CLASSES
             unique_classes, class_counts = np.unique(labels_np, return_counts=True)
             logger.info(f"---Unique classes: {unique_classes}, Counts: {class_counts}")
             # Raise an error if there's only one class

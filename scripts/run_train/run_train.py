@@ -102,10 +102,11 @@ def main(train, test):
 
     project = "mac_py_package"
     dataset_name = "sen1floods11"  # "sen1floods11" or "copernicus_floods"
+    mode = "train"
     input_is_linear = False   # True for copernicus direct downloads, False for Sen1floods11
     subset_fraction = 1
     bs = 8
-    max_epoch =15
+    max_epoch =1
     early_stop = False
     patience=10
     num_workers = 8
@@ -201,11 +202,11 @@ def main(train, test):
 
     if job_type == "train":
         logger.info(" Creating data loaders")
-        train_dl = create_subset(train_list, dataset_path, 'train', subset_fraction, inputs, bs, num_workers, persistent_workers, input_is_linear)
-        val_dl = create_subset(val_list, dataset_path, 'val', subset_fraction, inputs, bs, num_workers, persistent_workers, input_is_linear)
+        train_dl = create_subset(mode, train_list, dataset_path, 'train', subset_fraction, bs, num_workers, persistent_workers, input_is_linear)
+        val_dl = create_subset(mode, val_list, dataset_path, 'val', subset_fraction, bs, num_workers, persistent_workers, input_is_linear)
 
     if test:
-        test_dl = create_subset(test_list, dataset_path, 'test', subset_fraction, inputs, bs, num_workers, persistent_workers, input_is_linear)
+        test_dl = create_subset(mode, test_list, dataset_path, 'test', subset_fraction, bs, num_workers, persistent_workers, input_is_linear)
         ckpt_to_test = next(test_ckpt_path.rglob("*.ckpt"), None)
         if ckpt_to_test is None:
             raise FileNotFoundError(f"No checkpoint found in {test_ckpt_path}")
@@ -262,15 +263,14 @@ def main(train, test):
         max_epochs=config.max_epoch,
         accelerator=accelerator,
         devices=1,
-        precision=precision,
+        precision=32, # precision=precision once pytorch is upgraded to enable mixed which is faster on m2
         fast_dev_run=DEVRUN,
         num_sanity_val_steps=2,
         callbacks=callbacks,
     )
     # get info about train_dl
 
-    imgs, masks, valids = next(iter(train_dl))
-    print(imgs.shape, masks.shape, valids.shape)
+    imgs, masks = next(iter(train_dl))
     # → torch.Size([B, 2, H, W]) torch.Size([B, 1, H, W]) torch.Size([B, 1, H, W])
 
 
