@@ -28,6 +28,7 @@ from pathlib import Path
 import tifffile as tiff
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
+from matplotlib.colors import ListedColormap
 import numpy as np
 import wandb
 import io
@@ -35,6 +36,7 @@ import random
 import logging
 from scripts.train.train_helpers import is_sweep_run
 from scripts.train.train_functions import plot_auc_pr 
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -220,28 +222,44 @@ class Sen1Dataset(Dataset):
         csv_path: Path to one of the split CSVs (train.csv / val.csv / test.csv)
         root_dir: Path to the v1.1/data/ folder
         """
+
+
         self.root = root_dir
         self.db_min = db_min
         self.db_max = db_max
         self.input_is_linear = input_is_linear
+        self.mode = mode
+        valid_thresh = 0.3  # Minimum fraction of valid pixels to keep a tile
         self.img_paths  = []
         self.mask_paths = []
-        self.mode = mode
+        orig_imgs = []
+        orig_masks = []
         logger.info(f"---Dataset mode: {self.mode}")
         with open(csv_path, newline='') as f:
             reader = csv.reader(f)
             # assume the columns are named exactly "image" and "mask"
             for row in reader:
                 img_rel, mask_rel = row[0], row[1]
-                self.img_paths.append(self.root / 'S1Hand' / img_rel)
-                self.mask_paths.append(self.root / 'LabelHand' / mask_rel)
+                orig_imgs.append(self.root / 'S1Hand' / img_rel)
+                orig_masks.append(self.root / 'LabelHand' / mask_rel)
             
 
-        if len(self.img_paths) != len(self.mask_paths):
+        if len(orig_imgs) != len(orig_masks):
             raise ValueError(
-                f"Split file {csv_path} has {len(self.img_paths)} images "
-                f"but {len(self.mask_paths)} masks."
+                f"Split file {csv_path} has {len(orig_imgs)} images "
+                f"but {len(orig_masks)} masks."
             )
+        
+        for img_pth, mask_pth in zip(orig_imgs, orig_masks):
+            with rasterio.open(img_pth) as src:
+                valid = src.dataset_mask().astype(bool)
+                # dataset_mask()==1 where data is valid, 0 where nodata or outside the swath
+                if np.sum(valid) >= valid_thresh:
+                    self.img_paths.append(img_pth)
+                    self.mask_paths.append(mask_pth)
+
+                assert len(self.img_paths) == len(self.mask_paths)
+
 
     def __len__(self):
         return len(self.img_paths)
@@ -259,12 +277,12 @@ class Sen1Dataset(Dataset):
         vv[~valid] = np.nan
         vh[~valid] = np.nan
 
-        if self.mode == 'train':
+        # if self.mode == 'train':
             #  skip tile if >70% invalid
-            if np.sum(valid) < 0.3 * valid.size:
-                logger.info(f"Skipping tile {img_fp} due to too many invalid pixels.")
-                next_idx = (idx+1) % len(self)
-                return self.__getitem__(next_idx)
+            # if np.sum(valid) < 0.3 * valid.size:
+            #     logger.info(f"Skipping tile {img_fp} due to too many invalid pixels.")
+            #     next_idx = (idx+1) % len(self)
+            #     return self.__getitem__(next_idx)
         #  Clip & normalize
         for arr in (vv, vh):
 
@@ -353,7 +371,7 @@ class Segmentation_training_loop(pl.LightningModule):
         # logger.info(f'+++++++++++++    validation step')
         job_type = 'val'
         images, masks,  = batch
-        # DEBUGGING
+
         if torch.isnan(images).any() or torch.isinf(images).any():
             logger.info(f"VAl STEP - Batch {batch_idx} - Input contains NaN or Inf")
             logger.info(f"Mean: {images.mean()}, Std: {images.std()}, Min: {images.min()}, Max: {images.max()}")
@@ -363,7 +381,7 @@ class Segmentation_training_loop(pl.LightningModule):
         logits = self(images)
 
         # logger.info(f"---Validation Step {batch_idx}: logits shape={logits.shape}, masks shape={masks.shape}")
-            # DEBUGGING
+
         if torch.isnan(logits).any() or torch.isinf(logits).any():
             logger.info(f"---Batch {batch_idx} - Logits contain NaN or Inf")
             logger.info(f"---Logits Stats - Mean: {logits.mean()}, Std: {logits.std()}, Min: {logits.min()}, Max: {logits.max()}")
@@ -376,12 +394,12 @@ class Segmentation_training_loop(pl.LightningModule):
         # Check if this is the last batch and save visualization
         val_dataloader = self.trainer.val_dataloaders
         total_batches = len(val_dataloader) 
-        logger.info(f"---Total batches: {total_batches}")
-        # is logit a prob?
+        # logger.info(f"---Total batches: {total_batches}")
 
-        # remove the 255 dim from the images
         images = images.squeeze(1)  # Remove the channel dimension if it's 1
 
+        #   DEBUGGING
+        # logger.info(f"---Validation Step {batch_idx}: images shape={images.shape}, logits shape={logits.shape}, masks shape={masks.shape}")
         if self.current_epoch == self.trainer.max_epochs - 1 and batch_idx == 1:
         # This is the last epoch
             # logger.info(f'---used dynamic weights = {dynamic_weights}')
@@ -402,7 +420,7 @@ class Segmentation_training_loop(pl.LightningModule):
         images, masks = batch
 
         self.test_images.append(images.cpu())
-        # DEBUGGING
+
         if torch.isnan(images).any() or torch.isinf(images).any():
             logger.info(f"TEST STEP -Batch {batch_idx} - Input contains NaN or Inf")
             raise ValueError(f"Input contains NaN or Inf at batch {batch_idx}")
@@ -446,14 +464,11 @@ class Segmentation_training_loop(pl.LightningModule):
         ioumean, precisionmean, recallmean, f1mean = self.metrics_maker(logits, masks, job_type, loss, self.user_loss)
 
         return { "loss": loss,  "precision": precisionmean, "recall": recallmean, "iou": ioumean, "f1": f1mean, 'logits': logits, 'labels': masks}
-
-   
     
     def _get_current_lr(self):
         # logger.info(f'+++++++++++++    get current lr')
         lr = [x["lr"] for x in self.optimizers().param_groups]
         return lr[0]
-
     
     def compute_dynamic_weights(self, mask):
         
@@ -495,13 +510,6 @@ class Segmentation_training_loop(pl.LightningModule):
             dynamic_bool = False
             return loss.mean(), dynamic_bool
         
-    # from sklearn.metrics import f1_score
-
-    # def find_best_threshold(y_true, y_probs):
-    #     thresholds = [i / 100 for i in range(100)]
-    #     f1_scores = [f1_score(y_true.flatten(), (y_probs.flatten() >= t)) for t in thresholds]
-    #     best_threshold = thresholds[f1_scores.index(max(f1_scores))]
-    #     return best_threshold
 
     def configure_optimizers(self):
         logger.info(f'+++++++++++++    configure optimizers')
@@ -522,7 +530,6 @@ class Segmentation_training_loop(pl.LightningModule):
             }
         }
     
-    
     def log_combined_visualization(self, images, logits, masks, loss_name):
         """
         Visualizes input images, predictions, and ground truth masks side by side for a batch.
@@ -536,50 +543,58 @@ class Segmentation_training_loop(pl.LightningModule):
         assert preds.ndim == 4, f"Expected preds with 4 dimensions (B, C, H, W), got {preds.shape}"
         assert masks.ndim == 4, f"Expected masks with 4 dimensions (B, C, H, W), got {masks.shape}"
 
+        cmap_cyan = ListedColormap(['black', 'cyan'])  # Custom colormap for binary mask
+        plt.rcParams['axes.titlesize'] = 18
         max_samples = 20  # Maximum number of samples to visualize
         examples = []
         for i in range(min(images.shape[0], max_samples)):  # Loop through each sample in the batch
             # logger.info(f"---images.shape {images.shape}")
-
             # logger.info(f"---Sample {i}")
-            # Convert tensors to numpy
-            image = images[i].cpu().numpy()
-            image = image[0]
-            pred = preds[i].squeeze().cpu().numpy()
-            mask = masks[i].squeeze().cpu().numpy()
+
+            # CONVERT TENSORS TO NUMPY
+            image = images[i, 0].cpu().numpy()
 
             # combined = np.concatenate([image, pred, mask], axis=1)
             # plt.imshow(np.concatenate([image, pred, mask], axis=1), cmap="gray")
             # plt.title(f"Sample {i} | Input | Prediction | Ground Truth")
             # plt.show()
 
-            # logger.info(f"Image min: {image.min()}, max: {image.max()}")
-            # logger.info(f"Pred min: {pred.min()}, max: {pred.max()}")
-            # logger.info(f"Mask min: {mask.min()}, max: {mask.max()}")
-
-            # Normalize images and masks if needed (e.g., scale to [0, 255])
             epsilon = 1e-6
-            image = (image - image.min()) / (image.max() - image.min() + epsilon) * 255  # Normalize input image to [0, 255]
-            pred *= 255  # Threshold predictions and scale to [0, 255]
-            mask *= 255  # Scale ground truth mask to [0, 255]
+            vmin, vmax =  np.percentile(image, (2, 98))
+            img_vis = ((image - vmin) / (vmax - vmin + epsilon)).clip(0.1) * 255  # Normalize input image to [0, 255]
+            prob_vis = torch.sigmoid(logits[i]).squeeze().cpu().numpy().squeeze()
+            pred_vis = (prob_vis * 255).astype(np.uint8)  # Scale prediction to [0, 255]
+            mask_np = masks[i].squeeze().cpu().numpy().astype(np.uint8)  # 0,1
+            mask_vis = mask_np * 255
 
-            # Stack the images horizontally (side by side)
-            combined = np.concatenate([image, pred, mask], axis=1)
-            fig, ax = plt.subplots(figsize=(20,6))
-            fig.patch.set_edgecolor('yellow')  # Set border color
-            fig.patch.set_linewidth(3)        # Set border thickness
+            fig, axes = plt.subplots(1, 4, figsize=(26, 5))
+            axes[0].imshow(img_vis.astype(np.uint8),cmap='OrRd')
+            axes[0].set_title('SAR Input (OrRd)')
 
-            ax.imshow(np.concatenate([image, pred, mask], axis=1), cmap="gray")
-            ax.axis('off')  # Turn off axis labels
-            ax.set_title(f"Sample {i} | Input | Prediction | Ground Truth")
+            # 2) Probability heat-map
+            axes[1].imshow(prob_vis, cmap='inferno')
+            axes[1].set_title('P(flood)')
 
-            final_image = wandb.Image(combined, caption=f" sample {i} | Input | Prediction | Ground Truth")
-            examples.append(final_image)
+            # 3) Thresholded prediction (white=flood)
+            axes[2].imshow(pred_vis, cmap= cmap_cyan)
+            axes[2].set_title('Pred >0.5')
 
-            plt.close(fig)
+            # 4) Ground truth mask (white=flood)
+            axes[3].imshow(mask_vis, cmap='gray')
+            axes[3].set_title('GT Mask')
 
-        # Log to WandB
-        self.logger.experiment.log({"examples": examples})  
+
+
+            for ax in axes:
+                ax.axis('off') # Turn off axis
+            # plt.tight_layout([0, 0, 1, 0.9])            
+
+            # combined = np.concatenate([img_vis, pred_vis, mask_vis], axis=1)
+
+            examples.append(wandb.Image(fig))
+
+        # Log to WandB and add title
+        self.logger.experiment.log({"examples": examples}  )  
 
     
 
@@ -705,10 +720,27 @@ class Segmentation_training_loop(pl.LightningModule):
         # Thresholded predictions for metrics like IoU, precision, recall
         # move masks to cuda
 
+  
+        
+
         mthresh = 0.5
         probs = torch.sigmoid(logits) 
         preds = (probs > mthresh).int()
         # logger.info(f'---metric threshod={mthresh}')
+        valid = masks != 255  # Remove the 255 invalid channel, masks are now binary
+        if valid.sum() == 0:
+        # skip batch that contains only ignore pixels
+            return torch.tensor(0.), torch.tensor(0.), torch.tensor(0.), torch.tensor(0.)
+
+        preds = preds[valid].unsqueeze(1)  # Apply the mask to predictions
+        masks = masks[valid].long().unsqueeze(1)  # Apply the mask to ground truth
+
+        #  DEBGGING - print shapes
+        # logger.info(f"---Preds shape: {preds.shape}, Masks shape: {masks.shape}")
+        # logger.info(f"---Preds unique values: {torch.unique(preds)}")
+        # logger.info(f"---Masks unique values: {torch.unique(masks)}")
+
+
 
         # Compute metrics
         tp, fp, fn, tn = smp.metrics.get_stats(preds, masks.long(), mode='binary')
@@ -745,7 +777,7 @@ class Segmentation_training_loop(pl.LightningModule):
             self.log(f'f1_{job_type}', f1mean, prog_bar=True, on_step=False, on_epoch=True )
             self.log(f'thresh_{job_type}', mthresh)
             # Precision-Recall Curve Logging (Binary Classification)
-            # wandb_pr = wandb.plot.pr_curve(pr_masks, pr_probs, title=f"Precision-Recall Curve {job_type}")
+            # wandb_pr = wandb.plot.pr_curve(masks, probs, title=f"Precision-Recall Curve {job_type}")
             # self.log({"pr": wandb_pr})
      
 

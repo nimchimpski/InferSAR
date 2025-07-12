@@ -110,10 +110,10 @@ def main(train, test):
     early_stop = False
     patience=10
     num_workers = 8
-    WandB_online = False
+    WandB_online = True
     LOGSTEPS = 50
     PRETRAINED = True
-    inputs = ['vv', 'vh', 'mask']
+    # inputs = ['vv', 'vh', 'mask']
     in_channels = 2
     DEVRUN = 0
     user_loss = 'bce_dice' #'smp_bce' # 'bce_dice' #'focal' # 'bce_dice' # focal'
@@ -293,6 +293,8 @@ def main(train, test):
     if device.type == "cuda":
         torch.cuda.empty_cache()
 
+    end = time.time()
+    logger.info(f"Time taken: {((end - start) / 60):.2f} minutes")
 
 if __name__ == '__main__':
     main()
