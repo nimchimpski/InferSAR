@@ -51,7 +51,7 @@ from scripts.train.train_functions import  loss_chooser, wandb_initialization, j
 start = time.time()
 
 logging.basicConfig(
-    level=logging.INFO,                            # DEBUG, INFO,[ WARNING,] ERROR, CRITICAL
+    level=logging.WARNING,                            # DEBUG, INFO,[ WARNING,] ERROR, CRITICAL
     format=" %(levelname)-8s %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S")
 
@@ -104,9 +104,9 @@ def main(train, test):
     dataset_name = "sen1floods11"  # "sen1floods11" or "copernicus_floods"
     mode = "train"
     input_is_linear = False   # True for copernicus direct downloads, False for Sen1floods11
-    subset_fraction = 1
+    subset_fraction = 0.5
     bs = 8
-    max_epoch =1
+    max_epoch =10
     early_stop = False
     patience=10
     num_workers = 8
@@ -270,7 +270,7 @@ def main(train, test):
     )
     # get info about train_dl
 
-    imgs, masks = next(iter(train_dl))
+    imgs, masks, valids, fnames = next(iter(train_dl))
     # → torch.Size([B, 2, H, W]) torch.Size([B, 1, H, W]) torch.Size([B, 1, H, W])
 
 

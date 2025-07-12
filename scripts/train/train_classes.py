@@ -229,7 +229,7 @@ class Sen1Dataset(Dataset):
         self.db_max = db_max
         self.input_is_linear = input_is_linear
         self.mode = mode
-        valid_thresh = 0.3  # Minimum fraction of valid pixels to keep a tile
+        valid_thresh = 0.8  # Minimum fraction of valid pixels to keep a tile
         self.img_paths  = []
         self.mask_paths = []
         orig_imgs = []
@@ -257,6 +257,7 @@ class Sen1Dataset(Dataset):
                 if np.sum(valid) >= valid_thresh:
                     self.img_paths.append(img_pth)
                     self.mask_paths.append(mask_pth)
+                    
 
                 assert len(self.img_paths) == len(self.mask_paths)
 
@@ -266,8 +267,8 @@ class Sen1Dataset(Dataset):
 
     def __getitem__(self, idx):
         # 1) Load VV & VH
-        img_fp = self.img_paths[idx]
-        with rasterio.open(self.root/'S1Hand'/img_fp) as src:
+        img_pth = self.img_paths[idx]
+        with rasterio.open(self.root/'S1Hand'/img_pth) as src:
             vv = src.read(1).astype(np.float32)
             vh = src.read(2).astype(np.float32)
             valid = src.dataset_mask().astype(bool)
@@ -277,12 +278,6 @@ class Sen1Dataset(Dataset):
         vv[~valid] = np.nan
         vh[~valid] = np.nan
 
-        # if self.mode == 'train':
-            #  skip tile if >70% invalid
-            # if np.sum(valid) < 0.3 * valid.size:
-            #     logger.info(f"Skipping tile {img_fp} due to too many invalid pixels.")
-            #     next_idx = (idx+1) % len(self)
-            #     return self.__getitem__(next_idx)
         #  Clip & normalize
         for arr in (vv, vh):
 
@@ -310,10 +305,12 @@ class Sen1Dataset(Dataset):
         # 2) Load & binarize mask
         msk_pth = self.root/'LabelHand'/self.mask_paths[idx]
         with rasterio.open(msk_pth) as src:
-            mask = src.read(1).astype(np.int64)
-            mask = np.where(mask ==  -1, 255, mask)
+            raw = src.read(1).astype(np.int64)
+            valid_mask = torch.from_numpy(raw != -1).unsqueeze(0)  # valid pixels are 1, invalid are 0
+            mask = np.where(raw ==  -1, 255, raw)
             mask = torch.from_numpy(mask.astype(np.float32)).unsqueeze(0)  # Add a channel dimension
-        return (img, mask)
+            
+        return (img, mask, valid_mask, img_pth.name)
 
 
 class Segmentation_training_loop(pl.LightningModule):
@@ -347,15 +344,16 @@ class Segmentation_training_loop(pl.LightningModule):
         # logger.info(f'+++++++++++++++++++   training step') 
         job_type = 'train'
 
-        images, masks = batch
+        images, masks, valids, fnames = batch
         # DEBUGGING
         if torch.isnan(images).any() or torch.isinf(images).any():
             logger.info(f"TRAIN STEP - Batch {batch_idx} - Input contains NaN or Inf")
             logger.info(f"Mean: {images.mean()}, Std: {images.std()}, Min: {images.min()}, Max: {images.max()}")
             raise ValueError(f"Input contains NaN or Inf at batch {batch_idx}")
-        images, masks = images.to(self.device), masks.to(self.device)
+        images, masks, valids = images.to(self.device), masks.to(self.device), valids.to(self.device)
         logits = self(images)
         loss_per_pixel = self.loss_fn(logits, masks)  
+        loss_per_pixel = (loss_per_pixel * valids.float()).sum() / valids.sum()  # Apply valid mask to loss
         # ONLY APPLIES DYNAMIC WEIGHTS TO BCE LOSS
         loss, dynamic_weights = self.dynamic_weight_chooser(masks, loss_per_pixel, self.user_loss)
         # logger.info(f'---used dynamic weights = {dynamic_weights}')
@@ -364,20 +362,20 @@ class Segmentation_training_loop(pl.LightningModule):
         lr = self._get_current_lr()
         # self.log('lr', lr,  on_step=True, on_epoch=True, prog_bar=True, logger=True)
 
-        _, _, _, _= self.metrics_maker(logits, masks, job_type, loss, self.user_loss, lr)
+        _, _, _, _= self.metrics_maker(logits, masks, valids, job_type, loss, self.user_loss, lr)
         return loss
 
     def validation_step(self, batch, batch_idx):
         # logger.info(f'+++++++++++++    validation step')
         job_type = 'val'
-        images, masks,  = batch
+        images, masks, valids, fnames = batch
 
         if torch.isnan(images).any() or torch.isinf(images).any():
             logger.info(f"VAl STEP - Batch {batch_idx} - Input contains NaN or Inf")
             logger.info(f"Mean: {images.mean()}, Std: {images.std()}, Min: {images.min()}, Max: {images.max()}")
             raise ValueError(f"Input contains NaN or Inf at batch {batch_idx}")
 
-        images, masks  = images.to(self.device), masks.to(self.device)
+        images, masks, valids  = images.to(self.device), masks.to(self.device), valids.to(self.device)
         logits = self(images)
 
         # logger.info(f"---Validation Step {batch_idx}: logits shape={logits.shape}, masks shape={masks.shape}")
@@ -389,6 +387,8 @@ class Segmentation_training_loop(pl.LightningModule):
         
         self.validation_outputs.append({'logits': logits, 'masks': masks})  # Store outputs
         loss_per_pixel = self.loss_fn(logits, masks)
+        loss_per_pixel = (loss_per_pixel * valids).sum() / valids.sum()  # Apply valid mask to loss
+
         loss, dynamic_weights = self.dynamic_weight_chooser(masks, loss_per_pixel, self.user_loss)
         assert logits.device == masks.device
         # Check if this is the last batch and save visualization
@@ -400,24 +400,24 @@ class Segmentation_training_loop(pl.LightningModule):
 
         #   DEBUGGING
         # logger.info(f"---Validation Step {batch_idx}: images shape={images.shape}, logits shape={logits.shape}, masks shape={masks.shape}")
-        if self.current_epoch == self.trainer.max_epochs - 1 and batch_idx == 1:
+        if self.current_epoch == self.trainer.max_epochs - 1 and batch_idx < 3:
         # This is the last epoch
             # logger.info(f'---used dynamic weights = {dynamic_weights}')
             if not is_sweep_run():
-                self.log_combined_visualization(images, logits, masks, self.user_loss)
+                self.log_combined_visualization(images, logits, masks, valids, fnames, self.user_loss)
 
             # Save images if this is the best-performing model
             # if loss == self.trainer.checkpoint_callback.best_model_score and batch_idx < 2:
             #     self.log_combined_visualization(images, logits, masks, self.user_loss)
 
-        ioumean, precisionmean , recall, f1mean  = self.metrics_maker(logits, masks, job_type,  loss, self.user_loss )
+        ioumean, precisionmean , recall, f1mean  = self.metrics_maker(logits, masks, valids, job_type,  loss, self.user_loss )
 
         return {"loss": loss, "precision": precisionmean,"recall": recall, "iou": ioumean,  "f1": f1mean, 'logits': logits, 'labels': masks}   
 
     def test_step(self, batch, batch_idx):
         # logger.info(f'+++++++++++++    test step')
         job_type = 'test'
-        images, masks = batch
+        images, masks, valids, fnames = batch
 
         self.test_images.append(images.cpu())
 
@@ -427,7 +427,7 @@ class Segmentation_training_loop(pl.LightningModule):
         # logger.info(f"Validation Image Stats - Batch {batch_idx}")
         # logger.info(f"Mean: {images.mean()}, Std: {images.std()}, Min: {images.min()}, Max: {images.max()}")
 
-        images, masks = images.to(self.device), masks.to(self.device)
+        images, masks, valids = images.to(self.device), masks.to(self.device), valids.to(self.device)
         logits = self(images)
 
         # Debug tensor stats
@@ -441,6 +441,8 @@ class Segmentation_training_loop(pl.LightningModule):
 
         self.test_outputs.append({'logits': logits, 'masks': masks})  # Store outputs
         loss_per_pixel = self.loss_fn(logits, masks)
+        loss_per_pixel = (loss_per_pixel * valids).sum() / valids.sum()  # Apply valid mask to loss
+
         loss, dynamic_weights = self.dynamic_weight_chooser(masks, loss_per_pixel, self.user_loss)
         assert logits.device == masks.device
 
@@ -453,7 +455,7 @@ class Segmentation_training_loop(pl.LightningModule):
         # if batch_idx == 1:
         #     # logger.info('---batch_idx:', batch_idx)
         #     # logger.info(f"---Saving test outputs for batch {batch_idx}")
-        self.log_combined_visualization(images, logits, masks, self.user_loss)
+        self.log_combined_visualization(images, logits, masks, valids, self.user_loss)
         #     # JUST logger.info ON FIRST BATCH
         #     if batch_idx == 1:
         #         logger.info(f'---used dynamic weights = {dynamic_weights}')
@@ -530,7 +532,7 @@ class Segmentation_training_loop(pl.LightningModule):
             }
         }
     
-    def log_combined_visualization(self, images, logits, masks, loss_name):
+    def log_combined_visualization(self, images, logits, masks, valids, fnames, loss_name):
         """
         Visualizes input images, predictions, and ground truth masks side by side for a batch.
         """
@@ -543,16 +545,17 @@ class Segmentation_training_loop(pl.LightningModule):
         assert preds.ndim == 4, f"Expected preds with 4 dimensions (B, C, H, W), got {preds.shape}"
         assert masks.ndim == 4, f"Expected masks with 4 dimensions (B, C, H, W), got {masks.shape}"
 
-        cmap_cyan = ListedColormap(['black', 'cyan'])  # Custom colormap for binary mask
-        plt.rcParams['axes.titlesize'] = 18
+        plt.rcParams['axes.titlesize'] = 35
         max_samples = 20  # Maximum number of samples to visualize
         examples = []
         for i in range(min(images.shape[0], max_samples)):  # Loop through each sample in the batch
             # logger.info(f"---images.shape {images.shape}")
             # logger.info(f"---Sample {i}")
-
+            cmap_cyan = ListedColormap(['black', 'cyan'])           
             # CONVERT TENSORS TO NUMPY
             image = images[i, 0].cpu().numpy()
+            fname = fnames[i]
+            valid = valids[i].squeeze().cpu().numpy() # Convert valid mask to numpy
 
             # combined = np.concatenate([image, pred, mask], axis=1)
             # plt.imshow(np.concatenate([image, pred, mask], axis=1), cmap="gray")
@@ -563,17 +566,20 @@ class Segmentation_training_loop(pl.LightningModule):
             vmin, vmax =  np.percentile(image, (2, 98))
             img_vis = ((image - vmin) / (vmax - vmin + epsilon)).clip(0.1) * 255  # Normalize input image to [0, 255]
             prob_vis = torch.sigmoid(logits[i]).squeeze().cpu().numpy().squeeze()
-            pred_vis = (prob_vis * 255).astype(np.uint8)  # Scale prediction to [0, 255]
+            prob_vis = (prob_vis * valid.astype(np.uint8))  # Apply valid mask to probabilities
+
+            pred_vis = (prob_vis * valid.astype(np.uint8)* 255).astype(np.uint8)  # Scale prediction to [0, 255]
+            
             mask_np = masks[i].squeeze().cpu().numpy().astype(np.uint8)  # 0,1
             mask_vis = mask_np * 255
 
-            fig, axes = plt.subplots(1, 4, figsize=(26, 5))
+            fig, axes = plt.subplots(1, 4, figsize=(16, 5)) # in inches
             axes[0].imshow(img_vis.astype(np.uint8),cmap='OrRd')
-            axes[0].set_title('SAR Input (OrRd)')
+            axes[0].set_title('Input')
 
             # 2) Probability heat-map
-            axes[1].imshow(prob_vis, cmap='inferno')
-            axes[1].set_title('P(flood)')
+            axes[1].imshow(prob_vis, cmap='inferno', vmin = 0, vmax = 1)
+            axes[1].set_title('Prob')
 
             # 3) Thresholded prediction (white=flood)
             axes[2].imshow(pred_vis, cmap= cmap_cyan)
@@ -581,20 +587,17 @@ class Segmentation_training_loop(pl.LightningModule):
 
             # 4) Ground truth mask (white=flood)
             axes[3].imshow(mask_vis, cmap='gray')
-            axes[3].set_title('GT Mask')
+            axes[3].set_title('Label')
 
-
-
+            # fig.subplots_adjust(bottom=0.2) # in %
+  
             for ax in axes:
                 ax.axis('off') # Turn off axis
-            # plt.tight_layout([0, 0, 1, 0.9])            
-
-            # combined = np.concatenate([img_vis, pred_vis, mask_vis], axis=1)
-
-            examples.append(wandb.Image(fig))
+            # plt.tight_layout()  
+            examples.append(wandb.Image(fig, caption= f'{i} {fname}'))
 
         # Log to WandB and add title
-        self.logger.experiment.log({"examples": examples}  )  
+        self.logger.experiment.log({"examples": examples} )  
 
     
 
@@ -640,12 +643,12 @@ class Segmentation_training_loop(pl.LightningModule):
                 raise ValueError("---logits_np contains NaN or Inf values.")
             if not np.isfinite(labels_np).all():
                 raise ValueError("---labels_np contains NaN or Inf values.")
-            logger.info(f"---Logits: Min={logits_np.min()}, Max={logits_np.max()}, Mean={logits_np.mean()}")
-            logger.info(f"---Labels: Unique={np.unique(labels_np)}, Counts={np.bincount(labels_np.astype(int))}")
+            # logger.info(f"---Logits: Min={logits_np.min()}, Max={logits_np.max()}, Mean={logits_np.mean()}")
+            # logger.info(f"---Labels: Unique={np.unique(labels_np)}, Counts={np.bincount(labels_np.astype(int))}")
 
             # COUNT UNIQUE CLASSES
             unique_classes, class_counts = np.unique(labels_np, return_counts=True)
-            logger.info(f"---Unique classes: {unique_classes}, Counts: {class_counts}")
+            # logger.info(f"---Unique classes: {unique_classes}, Counts: {class_counts}")
             # Raise an error if there's only one class
             if len(unique_classes) < 2:
                 raise ValueError("---Precision-Recall curve requires at least two classes in the ground truth.")
@@ -714,33 +717,18 @@ class Segmentation_training_loop(pl.LightningModule):
         # Log AUC-PR for the test set
         self.log('auc_pr_test', auc_pr, prog_bar=True, logger=True)
 
-    def metrics_maker(self, logits, masks, job_type, loss, user_loss, lr=None):
-        # logger.info(f'+++++++++++++    metrics maker')
-        # logger.info(f"---Job type: {job_type}")
-        # Thresholded predictions for metrics like IoU, precision, recall
-        # move masks to cuda
-
+    def metrics_maker(self, logits, masks, valid, job_type, loss, user_loss, lr=None):
   
-        
-
         mthresh = 0.5
         probs = torch.sigmoid(logits) 
+
         preds = (probs > mthresh).int()
         # logger.info(f'---metric threshod={mthresh}')
-        valid = masks != 255  # Remove the 255 invalid channel, masks are now binary
         if valid.sum() == 0:
         # skip batch that contains only ignore pixels
             return torch.tensor(0.), torch.tensor(0.), torch.tensor(0.), torch.tensor(0.)
-
         preds = preds[valid].unsqueeze(1)  # Apply the mask to predictions
         masks = masks[valid].long().unsqueeze(1)  # Apply the mask to ground truth
-
-        #  DEBGGING - print shapes
-        # logger.info(f"---Preds shape: {preds.shape}, Masks shape: {masks.shape}")
-        # logger.info(f"---Preds unique values: {torch.unique(preds)}")
-        # logger.info(f"---Masks unique values: {torch.unique(masks)}")
-
-
 
         # Compute metrics
         tp, fp, fn, tn = smp.metrics.get_stats(preds, masks.long(), mode='binary')
@@ -756,12 +744,6 @@ class Segmentation_training_loop(pl.LightningModule):
         f1mean = f1.mean()
 
         assert loss is not None, f"Loss is None for {job_type} job" 
-
-        # Ensure tensors are moved to CPU
-        # pr_masks = masks.flatten().cpu().numpy()  # Convert to NumPy array
-        # pr_probs = probs.flatten().cpu().numpy()  # Convert to NumPy array
-
-        # logger.info(f"---pr_masks shape: {pr_masks.shape}, pr_probs shape: {pr_probs.shape}")
 
         # Logging
         if job_type == 'train':
