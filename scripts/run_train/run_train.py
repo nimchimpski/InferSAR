@@ -104,11 +104,11 @@ def main(train, test):
     dataset_name = "sen1floods11"  # "sen1floods11" or "copernicus_floods"
     mode = "train"
     input_is_linear = False   # True for copernicus direct downloads, False for Sen1floods11
-    subset_fraction = 0.5
+    subset_fraction = 1
     bs = 8
-    max_epoch =10
-    early_stop = False
-    patience=10
+    max_epoch =15
+    early_stop = True
+    patience=3
     num_workers = 8
     WandB_online = True
     LOGSTEPS = 50
@@ -222,7 +222,7 @@ def main(train, test):
         mode="min",
     )
     ###########    SETUP TRAINING LOOP    #########
-    ckpt_dir = repo_root / "5checkpoints"
+    ckpt_dir = repo_root / "checkpoints" / "ckpt_training"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_callback = ModelCheckpoint(
         dirpath=ckpt_dir,

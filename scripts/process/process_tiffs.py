@@ -701,11 +701,11 @@ def make_layerdict_TSX(extracted):
     datas = {}
     for file in extracted.iterdir():
         # logger.debug(f'---file {file}')
-        if 'final_image.tif' in file.name:
-            datas[file.name] = 'hh'
+        if '_vv' in file.name:
+            datas[file.name] = 'vv'
             # logger.debug(f'---+image file found {file}')
-        elif '4326_dem.tif' in file.name:
-            datas[file.name] = 'dem'
+        elif '_vh' in file.name:
+            datas[file.name] = 'vh'
             # logger.debug(f'---+dem file found {file}')
         elif '4326_slope.tif' in file.name:
             datas[file.name] = 'slope'   
@@ -846,7 +846,7 @@ def create_event_datacube_TSX(extracted_folder, mask_code, VERSION="v1"):
     
     logger.debug(f'>>>>>>>>>>>  ds saved for= {extracted_folder.name} bye bye >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n')
 
-def create_event_datacube_TSX_inf(event, mask_code, VERSION="v1"):
+def create_event_datacube_CopernicusDl(event, mask_code, VERSION="v1"):
     '''
     An xarray dataset is created for the event folder and saved as a .nc file.
     '''

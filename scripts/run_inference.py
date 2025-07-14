@@ -41,7 +41,7 @@ logging.getLogger('scripts.process.process_helpers').setLevel(logging.INFO)
 signal.signal(signal.SIGINT, handle_interrupt)
 
 @click.command()
-@click.option('--no_config', is_flag=True, help='loading from no_config folder', show_default=False)
+@click.option('--no_config', is_flag=True, help='loading from no_config settings', show_default=False)
 
 def main(no_config=False):
 
@@ -54,7 +54,7 @@ def main(no_config=False):
     # VARIABLES................................................................
     norm_func = 'logclipmm_g' # 'mm' or 'logclipmm'
     stats = 0
-    MAKE_TIFS = 1
+    MAKE_TIFS = 0
     MAKE_DATAARRAY= 1
     # stride = tile_size
     ############################################################################
