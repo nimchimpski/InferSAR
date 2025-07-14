@@ -216,8 +216,7 @@ class FloodDataset(Dataset):
 
 
 class Sen1Dataset(Dataset):
-    def __init__(self, mode: str, csv_path: Path, root_dir: Path, input_is_linear: bool, 
-                 db_min: float = -30.0, db_max: float = 0.0, ):
+    def __init__(self, mode: str, csv_path: Path, root_dir: Path, input_is_linear: bool, db_min: float = -30.0, db_max: float = 0.0, ):
         """
         csv_path: Path to one of the split CSVs (train.csv / val.csv / test.csv)
         root_dir: Path to the v1.1/data/ folder

@@ -18,13 +18,15 @@ import signal
 from rasterio.plot import show
 from rasterio.windows import Window
 from rasterio.warp import calculate_default_transform, reproject, Resampling
-from scripts.train.train_classes import UnetModel
+from collections import OrderedDict
+from skimage.morphology import binary_erosion
+from torch.utils.data import Dataset, DataLoader
+
+from scripts.train.train_classes import UnetModel, Sen1Dataset
 from scripts.train.train_helpers import pick_device
 from scripts.process.process_tiffs import  create_event_datacube_copernicus,reproject_to_4326_gdal, make_float32_inf, resample_tiff_gdal
 from scripts.process.process_dataarrays import tile_datacube_rxr_inf
 from scripts.process.process_helpers import  print_tiff_info_TSX, check_single_input_filetype, rasterize_kml_rasterio, compute_image_minmax, process_raster_minmax, path_not_exists, read_minmax_from_json, normalize_imagedata_inf, read_raster, write_raster
-from collections import OrderedDict
-from skimage.morphology import binary_erosion
 from scripts.process.process_helpers import handle_interrupt
 from scripts.inference_helpers import make_prediction_tiles, stitch_tiles, clean_checkpoint_keys
 
@@ -53,8 +55,11 @@ def main(no_config=False):
 
 
     # VARIABLES................................................................
+    mode = 'inference' # 'inference' = input_is_linear = True
     norm_func = 'logclipmm_g' # 'mm' or 'logclipmm'
     stats = 0
+    db_min = -30.0
+    db_max = 0.0
     MAKE_TIFS = 0
     MAKE_DATAARRAY= 0
     # stride = tile_size
@@ -73,7 +78,7 @@ def main(no_config=False):
     ckpt_path = Path("/Users/alexwebb/laptop_coding/floodai/InferSAR/checkpoints/ckpt_INPUT")
 
     ############################################################################
-    if no_config:
+    if not config:
         threshold =  0.5 # PREDICTION CONFIDENCE THRESHOLD
         tile_size = 256 # TILE SIZE FOR INFERENCE
         # Normalize all paths in the config
@@ -88,7 +93,7 @@ def main(no_config=False):
         # analysis_extent = Path('Users/alexwebb/floodai/InferSAR/data/4final/predict_INPUT/extent_INPUT')  
 
     # READ CONFIG
-    else:
+    elif config:
         config_path = Path('/Users/alexwebb/laptop_coding/floodai/InferSAR/configs/floodaiv2_config.yaml')
         with open(config_path, "r") as file:
             config = yaml.safe_load(file)
@@ -133,17 +138,11 @@ def main(no_config=False):
     # parts = image.name.split('_')
     # image_code = "_".join(parts[:-1])
     # logger.info(f'image_code= ',image_code)
-    save_path = output_folder / f'{sensor}_{image_code}_{date}_{tile_size}_{threshold}{output_filename}_WATER_AI.tif'
+    stiched_img = output_folder / f'{sensor}_{image_code}_{date}_{tile_size}_{threshold}{output_filename}_WATER_AI.tif'
 
-    logger.info(f'output filename: {save_path.name}')
-    if save_path.exists():
-        logger.info(f"---overwriting existing file! : {save_path}")
-        # try:
-        #     logger.info(f"--- Deleting existing prediction file: {save_path}")
-        #     save_path.unlink()
-        # except Exception as e:
-        #     logger.info(f"--- Error deleting existing prediction file: {e}")
-        #     return
+    logger.info(f'output filename: {stiched_img.name}')
+    if stiched_img.exists():
+        logger.info(f"---overwriting existing file! : {stiched_img}")
 
     # CREATE THE EXTRACTED FOLDER
     extracted = predict_input / f'{image_code}_extracted'
@@ -218,31 +217,84 @@ def main(no_config=False):
     # logger.info(f"{len(metadata)} metadata saved to {save_tiles_path}")
     # metadata = Path(save_tiles_path) / 'tile_metadata.json'
 
+    # NOW YOU HAVE FOLDER OF TILES - SAME STATE AS TRAINING
+
     # INITIALIZE THE MODEL
     # device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     device=pick_device()
-    model = UnetModel( encoder_name="resnet34", in_channels=2, classes=1, pretrained=True 
+    model = UnetModel( encoder_name="resnet34", in_channels=2, classes=1, pretrained=True.to(device)
     )   
-    model.to(device)
     # LOAD THE CHECKPOINT
     ckpt_path = Path(ckpt)
     checkpoint = torch.load(ckpt_path)
 
-    cleaned_state_dict = clean_checkpoint_keys(checkpoint["state_dict"])
-
     # EXTRACT THE MODEL STATE DICT
-    # state_dict = checkpoint["state_dict"]
+    cleaned_state_dict = clean_checkpoint_keys(checkpoint["state_dict"])
 
     # LOAD THE MODEL STATE DICT
     model.load_state_dict(cleaned_state_dict)
 
-    # SET THE MODEL TO EVALUATION MODE
+    # MAKE DATASET  CLASS INSTANCE
+
+    if mode == 'inference':
+        bs = 1,
+        shuffle = False,
+        input_is_linear = True
+
+    infer_ds = Sen1Dataset(
+        mode='inference',
+        csv_path=save_tiles_path / 'tile_metadata.json',
+        root_dir=save_tiles_path,
+        input_is_linear=input_is_linear,
+        db_min=db_min,
+        db_max=db_max)
+    
+        # MAKE DATALOADER FROM DATASET
+
+    infer_dl = DataLoader( infer_ds,
+        batch_size=bs,  # Batch size of 1 for inference 
+        shuffle=shuffle,  # No need to shuffle for inference
+        num_workers=4,  # Adjust based on your system
+        persistent_workers=True,  # Keep workers alive for faster loading   
+        )
+
+    # prediction_tiles = make_prediction_tiles(save_tiles_path, metadata, model, device, threshold)
+
+    # ----------MAKE PREDICTIONS IN BATCHES
     model.eval()
 
-    prediction_tiles = make_prediction_tiles(save_tiles_path, metadata, model, device, threshold)
+    # DEFINE THE PREDICTION TILES FOLDER
+    predictions_folder = save_tiles_path.parent / f'{save_tiles_path.stem}_predictions'
+    # DELETE THE PREDICTION FOLDER IF IT EXISTS
+    if predictions_folder.exists():
+        logger.info(f"--- Deleting existing predictions folder: {predictions_folder}")
+        shutil.rmtree(predictions_folder)
+    predictions_folder.mkdir(exist_ok=True)
+
+    with torch.no_grad():
+        for imgs, _, valids, fnames in tqdm(infer_dl, desc="Predict"):
+            imgs   = imgs.to(device)            # [B,2,H,W]
+            logits = model(imgs)
+            probs  = torch.sigmoid(logits).cpu()  # back to CPU for numpy/rasterio
+            preds  = (probs > threshold).float()  # [B,1,H,W]
+
+            for b, name in enumerate(fnames):
+                out = preds[b, 0].numpy()                 # 2-D
+                out[~valids[b, 0].numpy().astype(bool)] = 0  # mask invalid px
+
+                src_path = save_tiles_path / name
+                with rasterio.open(src_path) as src:
+                    profile = src.profile
+                profile.update(dtype="float32", count=1)
+
+                dst_path = predictions_folder / name
+                with rasterio.open(dst_path, "w", **profile) as dst:
+                    dst.write(out.astype("float32"), 1)
+
 
     # STITCH PREDICTION TILES
-    prediction_img = stitch_tiles(metadata, prediction_tiles, save_path, final_image)
+    input_image = next(predict_input.rglob("*.tif"), None) if name in ['vv', 'vh'] else None
+    prediction_img = stitch_tiles(metadata, predictions_folder, stiched_img, input_image)
     # logger.info prediction_img size
     # logger.info(f'prediction_img shape:',prediction_img.shape)
     # display the prediction mask
