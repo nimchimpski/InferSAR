@@ -26,8 +26,8 @@ from scripts.process.process_helpers import  nan_check, print_dataarray_info
 logger = logging.getLogger(__name__)
 
 def fill_nodata_with_zero(input_file):
-    logger.debug('+++in fill_nodata_with_zero fn')
-    #logger.debug('+++in fill_nodata_with_zero fn')
+    logger.info('+++in fill_nodata_with_zero fn')
+    #logger.info('+++in fill_nodata_with_zero fn')
     input_str = str(input_file)
     # Open the input raster file
     dataset = gdal.Open(input_str, gdal.GA_Update)
@@ -41,7 +41,7 @@ def fill_nodata_with_zero(input_file):
 
     # Replace nodata values with 0
     if nodata_value is not None:
-        #logger.debug('---replacing nans with 0 in ',input_file.name)
+        #logger.info('---replacing nans with 0 in ',input_file.name)
         data[data == nodata_value] = 0
     
     # Write the modified array back to the raster
@@ -53,28 +53,28 @@ def fill_nodata_with_zero(input_file):
 
 def check_layers(layers, layer_names):
     '''
-    checks the layers and logger.debugs out some info
+    checks the layers and logger.infos out some info
     '''
-    logger.debug('\n+++in check_layers fn+++++++++++++++++++++++++')
+    logger.info('\n+++in check_layers fn+++++++++++++++++++++++++')
     # Assuming you have a list of Dask arrays, each representing a layer
     
     for i, layer in enumerate(layers):
-        logger.debug(f'---layer name = {layer_names[i]}')
-        #logger.debug(f"---Layer {i+1}:")
+        logger.info(f'---layer name = {layer_names[i]}')
+        #logger.info(f"---Layer {i+1}:")
 
-        # logger.debug the shape of the layer
-        #logger.debug(f"---Shape: {layer.shape}")
+        # logger.info the shape of the layer
+        #logger.info(f"---Shape: {layer.shape}")
 
-        # logger.debug the data type of the layer
-        #logger.debug(f"---Data Type: {layer.dtype}")
+        # logger.info the data type of the layer
+        #logger.info(f"---Data Type: {layer.dtype}")
 
         # Assuming the array has x and y coordinates in the `.coords` attribute (like in xarray)
-        # You can access and logger.debug the coordinates if it is an xarray DataArray or a similar structure
+        # You can access and logger.info the coordinates if it is an xarray DataArray or a similar structure
         #if hasattr(layer, 'coords'):  # If using Dask with xarray-like data
-        #    logger.debug(f"---X Coordinates: {layer.coords['x']}")
-        #    logger.debug(f"---Y Coordinates: {layer.coords['y']}")
+        #    logger.info(f"---X Coordinates: {layer.coords['x']}")
+        #    logger.info(f"---Y Coordinates: {layer.coords['y']}")
         #else:
-        #    logger.debug("---No coordinate information available.")
+        #    logger.info("---No coordinate information available.")
 
         # Check for NaN or Inf values in the layer
         nan_check(layer)
@@ -85,11 +85,11 @@ def create_vv_and_vh_tifs(file):
     '''
     will delete the original image after creating the vv and vh tifs
     '''
-    logger.debug('+++in create_vv_and_vh_tifs fn')
+    logger.info('+++in create_vv_and_vh_tifs fn')
 
-    # logger.debug(f'---looking at= {file.name}')
+    # logger.info(f'---looking at= {file.name}')
     if 'img.tif' in file.name:
-        #logger.debug(f'---found image file= {file.name}')
+        #logger.info(f'---found image file= {file.name}')
         # Open the multi-band TIFF
         with rasterio.open(file) as target:
             # Read the vv (first band) and vh (second band)
@@ -107,31 +107,31 @@ def create_vv_and_vh_tifs(file):
             vh_newname = file.name.rsplit('_', 1)[0]+'_vh.tif'
             with rasterio.open(file.parent / vh_newname, 'w', **meta) as destination:
                 destination.write(vh_band, 1)  # Write band 2 (vh)
-        logger.debug('---DELETING ORIGINAL IMAGE FILE')
+        logger.info('---DELETING ORIGINAL IMAGE FILE')
         file.unlink()  # Delete the original image file  
     else:
-        logger.debug(f'---NO IMAGE FOUND !!!!!= {file.name}')
+        logger.info(f'---NO IMAGE FOUND !!!!!= {file.name}')
 
             # delete original image using unlink() method
-    #logger.debug('---finished create_vv_and_vh_tifs fn')
+    #logger.info('---finished create_vv_and_vh_tifs fn')
 
 # CREAT ANALYSIS EXTENT
 def create_extent_from_mask(mask_path, output_raster, no_data_value=None):
     """
     this assumes the mask is a binary mask where valid data is 1 and no-data is 0, probably for the surrounding area"""
     # Load the mask file
-    logger.debug('+++in create_extent_from_mask fn')
+    logger.info('+++in create_extent_from_mask fn')
     with rasterio.open(mask_path) as src:
         mask = src.read(1)  # Read the first band
         transform = src.transform
         crs = src.crs
-        logger.debug(f'---src.nodata= {src.nodata}')
+        logger.info(f'---src.nodata= {src.nodata}')
 
         # Identify no-data value
         if no_data_value is None:
             no_data_value = src.nodata
         if no_data_value is None:
-            logger.debug("No no-data value found in metadata or provided.")
+            logger.info("No no-data value found in metadata or provided.")
             return
             # create a binary mask with the entire image as 1
             
@@ -152,7 +152,7 @@ def create_extent_from_mask(mask_path, output_raster, no_data_value=None):
     ) as dst:
         dst.write(binary_mask, 1)
 
-    logger.debug(f"extent saved to {output_raster}")
+    logger.info(f"extent saved to {output_raster}")
 
 
 def create_valid_mask(img_path, mask_path, mask_code, dest_folder, inference=False):  
@@ -161,7 +161,7 @@ def create_valid_mask(img_path, mask_path, mask_code, dest_folder, inference=Fal
     The valid mask is saved as 'valid_mask.tif'.
     The original mask is rewritten with IGNORE_VAL where invalid.
     """
-    logger.debug('+++in create_valid_mask fn')
+    logger.info('+++in create_valid_mask fn')
     
     # Constants
     PAD_VAL      = 0          # or 1
@@ -175,9 +175,9 @@ def create_valid_mask(img_path, mask_path, mask_code, dest_folder, inference=Fal
         img   = img_src.read(1)
         mask = msk_src.read(1)
         prof = img_src.profile        # same for all bands after reprojection
-        logger.debug(f'---img shape= {img.shape}')
-        logger.debug(f'---mask shape= {mask.shape}')
-        logger.debug(f'---img dtype= {img.dtype}')
+        logger.info(f'---img shape= {img.shape}')
+        logger.info(f'---mask shape= {mask.shape}')
+        logger.info(f'---img dtype= {img.dtype}')
     # --- build valid mask ---
     valid = ~(np.isclose(img, PAD_VAL, atol=ATOL) &
               np.isclose(mask, PAD_VAL, atol=ATOL))
@@ -211,7 +211,7 @@ def compute_image_min_max(image, band_to_read=1):
         # Update global min and max
         min = int(data.min())
         max = int(data.max())
-        logger.debug(f"---{image.name}: Min: {data.min()}, Max: {data.max()}")
+        logger.info(f"---{image.name}: Min: {data.min()}, Max: {data.max()}")
     return min, max
 
 def calculate_and_normalize_slope(input_dem, mask_code):
@@ -230,16 +230,16 @@ def calculate_and_normalize_slope(input_dem, mask_code):
 
     try:
         subprocess.run(gdal_command, check=True)
-        logger.debug(f"Raw slope raster created: {temp_slope}")
+        logger.info(f"Raw slope raster created: {temp_slope}")
     except subprocess.CalledProcessError as e:
-        logger.debug(f"Error calculating slope: {e}")
+        logger.info(f"Error calculating slope: {e}")
         return
 
     # Step 2: Normalize slope using rasterio
     with rasterio.open(temp_slope) as src:
         slope = src.read(1)  # Read the slope data
         slope_min, slope_max = slope.min(), slope.max()
-        logger.debug(f"Min slope: {slope_min}, Max slope: {slope_max}")
+        logger.info(f"Min slope: {slope_min}, Max slope: {slope_max}")
 
         # Normalize the slope to the range [0, 1]
         slope_norm_data = (slope - slope_min) / (slope_max - slope_min)
@@ -257,7 +257,7 @@ def calculate_and_normalize_slope(input_dem, mask_code):
     # Cleanup temporary raw slope file
     Path(temp_slope).unlink()
 
-    logger.debug(f"Normalized slope raster saved to: {normalized_slope}")
+    logger.info(f"Normalized slope raster saved to: {normalized_slope}")
     return normalized_slope
 
 # CHANGE DATA TYPE
@@ -265,16 +265,16 @@ def make_float32_inf(input_tif, output_file):
     '''
     converts the tif to float32
     '''
-    # logger.debug('+++in make_float32 inf')
+    # logger.info('+++in make_float32 inf')
     with rasterio.open(input_tif) as src:
         data = src.read()
-        # logger.debug(f"---Original shape: {data.shape}, dtype: {data.dtype}")
+        # logger.info(f"---Original shape: {data.shape}, dtype: {data.dtype}")
         if data.dtype == 'float32':
-            logger.debug(f'---{input_tif.name} already float32')
+            logger.info(f'---{input_tif.name} already float32')
             meta = src.meta.copy()
             meta['count'] = 1
         else:
-            # logger.debug(f'---{input_tif.name} converting to float32')
+            # logger.info(f'---{input_tif.name} converting to float32')
             # Update the metadata
             meta = src.meta.copy()
             meta.update(dtype='float32')
@@ -291,19 +291,19 @@ def make_float32(input_tif, file_name):
     '''
     input_tif = Path(input_tif)
     file_name = Path(file_name)
-    logger.debug('+++in make_float32 fn')
+    logger.info('+++in make_float32 fn')
     with rasterio.open(input_tif) as src:
         data = src.read()
-        logger.debug(f"---Original shape: {data.shape}, dtype: {data.dtype}")
+        logger.info(f"---Original shape: {data.shape}, dtype: {data.dtype}")
         if data.dtype == 'float32':
-            logger.debug(f'---{input_tif.name} already float32')
+            logger.info(f'---{input_tif.name} already float32')
             src.close()
             input_tif.rename(file_name)
-            logger.debug(f'---renamed {input_tif.name} to {file_name}')
+            logger.info(f'---renamed {input_tif.name} to {file_name}')
             return file_name
 
         else:
-            logger.debug(f'---{input_tif.name} converting to float32')
+            logger.info(f'---{input_tif.name} converting to float32')
             # Update the metadata
             meta = src.meta.copy()
             meta.update(dtype='float32')
@@ -324,7 +324,7 @@ def make_float32_inmem(input_tif):
 
         # Check if data is already float32
         if meta['dtype'] == 'float32':
-            logger.debug('---Data already in float32 format.')
+            logger.info('---Data already in float32 format.')
             return src  # Return the original dataset if already float32
 
         # Convert data to float32
@@ -337,7 +337,7 @@ def make_float32_inmem(input_tif):
         with MemoryFile() as memfile:
             with memfile.open(**meta) as mem:
                 mem.write(converted_data)
-                logger.debug('---Converted to float32 and written to memory.')
+                logger.info('---Converted to float32 and written to memory.')
                 return memfile.open()
 
 
@@ -348,44 +348,44 @@ def xxx():
         # MATCH THE DEM TO THE SAR IMAGE
         # final_dem = extract_folder / f'{mask_code}_aligned_dem.tif'
         # match_dem_to_mask(image, dem, final_dem)
-        # # logger.debug(f'>>>final_dem={final_dem.name}')
+        # # logger.info(f'>>>final_dem={final_dem.name}')
 
         # # CHECK THE NEW DEM
         # with rasterio.open(final_dem) as dem_src:
         #     with rasterio.open(image) as img_src:
         #         image_bounds = img_src.bounds
         #         image_crs = img_src.crs
-        #         logger.debug(f'>>>image crs={image_crs}')
-        #         logger.debug(f'>>>dem crs={dem_src.crs}')  
+        #         logger.info(f'>>>image crs={image_crs}')
+        #         logger.info(f'>>>dem crs={dem_src.crs}')  
         #         img_width = img_src.width
         #         img_height = img_src.height
         #         img_transform = img_src.transform
-        #         logger.debug(f'>>>bounds match={dem_src.bounds == image_bounds}')
-        #         logger.debug(f'>>>crs match={dem_src.crs == image_crs}')
-        #         logger.debug(f'>>>width match={dem_src.width == img_width}')
-        #         logger.debug(f'>>>height match={dem_src.height == img_height}')
-        #         logger.debug(f'>>>transform match={dem_src.transform == img_transform}')
-        #         logger.debug(f'>>>count match={dem_src.count == img_src.count}')
+        #         logger.info(f'>>>bounds match={dem_src.bounds == image_bounds}')
+        #         logger.info(f'>>>crs match={dem_src.crs == image_crs}')
+        #         logger.info(f'>>>width match={dem_src.width == img_width}')
+        #         logger.info(f'>>>height match={dem_src.height == img_height}')
+        #         logger.info(f'>>>transform match={dem_src.transform == img_transform}')
+        #         logger.info(f'>>>count match={dem_src.count == img_src.count}')
 
         # normalized_slope = calculate_and_normalize_slope(final_dem, mask_code)
 
         # # CHECK THE SLOPE
         # with rasterio.open(extract_folder / f'{mask_code}_slope_norm.tif') as src:
-        #     logger.debug(f'>>>slope min={src.read().min()}')
-        #     logger.debug(f'>>>slope max={src.read().max()}')
+        #     logger.info(f'>>>slope min={src.read().min()}')
+        #     logger.info(f'>>>slope max={src.read().max()}')
         #     data = src.read()
         #     nonans = nan_check(data)
-        #     logger.debug(f'>>>nonans?={nonans}')
+        #     logger.info(f'>>>nonans?={nonans}')
         pass
 
 # REPROJECTING
 def reproject_layers_to_4326_TSX( src_path, dst_path):
-    logger.debug('+++in reproject_layers_to_4326_TSX fn')
+    logger.info('+++in reproject_layers_to_4326_TSX fn')
 
     with rasterio.open(src_path) as src:
-        # logger.debug(f'---src_path= {src_path.name}')
-        # logger.debug(f'---dst_path= {dst_path.name}')
-        # logger.debug(f'---src_path crs = {src.crs}')
+        # logger.info(f'---src_path= {src_path.name}')
+        # logger.info(f'---dst_path= {dst_path.name}')
+        # logger.info(f'---src_path crs = {src.crs}')
         
         transform, width, height = calculate_default_transform(src.crs, 'EPSG:4326', src.width, src.height, *src.bounds)
         kwargs = src.meta.copy()
@@ -402,7 +402,7 @@ def reproject_layers_to_4326_TSX( src_path, dst_path):
                     dst_transform=transform,
                     dst_crs='EPSG:4326',
                     resampling=Resampling.nearest)
-            # logger.debug(f'---reprojected {src_path.name} to {dst_path.name} with {dst.crs}')
+            # logger.info(f'---reprojected {src_path.name} to {dst_path.name} with {dst.crs}')
 
 def reproject_to_4326_gdal(input_path, output_path, resampleAlg):
     if isinstance(input_path, Path):
@@ -412,7 +412,7 @@ def reproject_to_4326_gdal(input_path, output_path, resampleAlg):
     # Open the input raster
     src_ds = gdal.Open(input_path)
     if not src_ds:
-        logger.debug(f"Failed to open {input_path}")
+        logger.info(f"Failed to open {input_path}")
         return
     
     # Ensure the input raster has a spatial reference system
@@ -429,13 +429,13 @@ def reproject_to_4326_gdal(input_path, output_path, resampleAlg):
         format="GTiff",
     )  
     gdal.Warp(output_path, src_ds, options=warp_options)
-    # logger.debug(f"---Reprojected raster saved to: {output_path}")           
+    # logger.info(f"---Reprojected raster saved to: {output_path}")           
 
     return output_path   
 
 def reproject_to_4326_fixpx_gdal(input_path, output_path, resampleAlg, px_size):
-    logger.debug('+++in reproject_to_4326_fixpx_gdal fn')
-    # logger.debug(f'---resampleAlg= {resampleAlg}')
+    logger.info('+++in reproject_to_4326_fixpx_gdal fn')
+    # logger.info(f'---resampleAlg= {resampleAlg}')
     if isinstance(input_path, Path):
         input_path = str(input_path)
     if isinstance(output_path, Path):
@@ -443,7 +443,7 @@ def reproject_to_4326_fixpx_gdal(input_path, output_path, resampleAlg, px_size):
     # Open the input raster
     src_ds = gdal.Open(input_path)
     if not src_ds:
-        logger.debug(f"Failed to open {input_path}")
+        logger.info(f"Failed to open {input_path}")
         return
 
     target_srs = 'EPSG:4326'
@@ -456,7 +456,7 @@ def reproject_to_4326_fixpx_gdal(input_path, output_path, resampleAlg, px_size):
         resampleAlg=resampleAlg,  # Resampling method (nearest neighbor for categorical data)
     )  
     gdal.Warp(output_path, src_ds, options=warp_options)
-    # logger.debug(f"---Reprojected raster saved to: {output_path}")           
+    # logger.info(f"---Reprojected raster saved to: {output_path}")           
 
     return output_path   
 
@@ -466,7 +466,7 @@ def match_resolutions_with_check(event):
     Match the resolution and dimensions of the target raster to the reference raster
     only if they differ.
     """
-    #logger.debug('+++++++in match_resolutions_with_check fn')
+    #logger.info('+++++++in match_resolutions_with_check fn')
 
     # Find the reference file (vv.tif)
     reference_path = None
@@ -476,13 +476,13 @@ def match_resolutions_with_check(event):
             break
     
     if not reference_path:
-        logger.debug('--- No reference vv.tif file found.')
+        logger.info('--- No reference vv.tif file found.')
         return
     
     # Open the reference layer to get its resolution
     with rxr.open_rasterio(reference_path) as reference_layer:
         reference_resolution = reference_layer.rio.resolution()
-        #logger.debug(f'--- Reference file {reference_path.name} resolution: {reference_resolution}')
+        #logger.info(f'--- Reference file {reference_path.name} resolution: {reference_resolution}')
     
     # Loop through other files to check and reproject if necessary
     for file in event.iterdir():
@@ -490,38 +490,38 @@ def match_resolutions_with_check(event):
             patterns = ['vv.tif', 'vh.tif', '_s2_', '.json','.nc']
             if not any(i in file.name for i in patterns) and 'epsg4326' in file.name:
 
-                #logger.debug(f'--- analysing this file = {file.name}')
+                #logger.info(f'--- analysing this file = {file.name}')
                 # Open the target layer to compare resolutions
                 with rxr.open_rasterio(file) as target_layer:
                     target_resolution = target_layer.rio.resolution()
-                    #logger.debug(f'--- Target file {file.name} resolution: {target_resolution}')
+                    #logger.info(f'--- Target file {file.name} resolution: {target_resolution}')
 
                     # Compare resolutions with a small tolerance
                     if abs(reference_resolution[0] - target_resolution[0]) < 1e-10 and \
                        abs(reference_resolution[1] - target_resolution[1]) < 1e-10:
-                        #logger.debug(f"--- Skipping {file.name} (resolution already matches)")
+                        #logger.info(f"--- Skipping {file.name} (resolution already matches)")
                         continue
 
                     # Reproject target file to match reference
                     reprojected_layer = target_layer.rio.reproject_match(reference_layer)
                 # Save reprojected file (once target file is closed)
                 reprojected_layer.rio.to_raster(file)
-                #logger.debug(f'--- Resampled raster saved to: {file.name}')
+                #logger.info(f'--- Resampled raster saved to: {file.name}')
 
 def resample_tiff(src_image, dst_image, target_res):
-    logger.debug(f'+++resample_tiff::::target res= {target_res}')
+    logger.info(f'+++resample_tiff::::target res= {target_res}')
     with rasterio.open(src_image, 'r') as src:
         # Read metadata and calculate new dimensions
         src_res = src.res  # (pixel width, pixel height in CRS units)
-        logger.debug(f'---src_res= {src_res}')
+        logger.info(f'---src_res= {src_res}')
         scale_factor_x = src_res[0] / target_res
         scale_factor_y = src_res[1] / target_res
 
         new_width = round(src.width * scale_factor_x)
         new_height = round(src.height * scale_factor_y)
-        logger.debug(f'--- New Dimensions: width={new_width}, height={new_height}')
+        logger.info(f'--- New Dimensions: width={new_width}, height={new_height}')
         new_transform = src.transform * src.transform.scale(scale_factor_x, scale_factor_x)
-        logger.debug(f'--- New Transform: {new_transform}')
+        logger.info(f'--- New Transform: {new_transform}')
 
         # Update metadata
         kwargs = src.meta.copy()
@@ -542,7 +542,7 @@ def resample_tiff(src_image, dst_image, target_res):
                     resampling=Resampling.bilinear
                 )
                 dst.write(resampled_data, i)
-    logger.debug(f"Resampled image saved to {dst_image}")
+    logger.info(f"Resampled image saved to {dst_image}")
 
 def resample_tiff_gdal(src_image, dst_image, target_res):
     """
@@ -558,7 +558,7 @@ def resample_tiff_gdal(src_image, dst_image, target_res):
         src_image = str(src_image)
     if isinstance(dst_image, Path):
         dst_image = str(dst_image)
-    logger.debug(f'+++ Resampling {src_image} to target resolution: {target_res} m/pixel')
+    logger.info(f'+++ Resampling {src_image} to target resolution: {target_res} m/pixel')
 
     # Open the source dataset
     src_ds = gdal.Open(src_image)
@@ -575,202 +575,70 @@ def resample_tiff_gdal(src_image, dst_image, target_res):
         outputType=gdal.GDT_Float32,   # Save as 32-bit float
     )
 
-    logger.debug(f'+++ Resampled image saved to: {dst_image}')
+    logger.info(f'+++ Resampled image saved to: {dst_image}')
 
 # CREATING DATACUBES
 
-def create_event_datacubes(data_root, save_path, VERSION="v1"):
+def make_layerdict(extracted):
     '''
-    data_root: Path directory containing the event folders (1deep).
-
-    An xarray dataset is created for each event folder and saved as a .nc file.
-    NB DATASET IS A COLLECTION OF DATAARRAYS
-        # TODO add RTC functionality
-
+    iterates through the files in the extacted folder and returns a dict of the datas
     '''
-    # LOOP THE FOLDERS BY  COUNTRIES, SOME REPEATED WITH DIF NUMBERED SUFFIX 
-    for event in tqdm(data_root.iterdir() ): # CREATES ITERABLE FO FILE PATHS 
-
-        # IGNORE .NC FILES
-        if event.suffix == '.nc' or event.name in ['tiles'] or not event.is_dir():
-            # logger.debug(f"Skipping file: {event.name}")
-            continue
-
-        if event.is_dir() and any(event.iterdir()):
-            logger.debug(f"***************** {event.name}   PREPARING TIFS *****************: ")
-            # DO WORK ON THE TIFS
-            # LOOP TIFFS + PREPARE THEM FOR DATA CUBE
-            for file in event.iterdir():
-                if 'epsg4326' in file.name and '_s2_' not in file.name:
-                    if file.name.endswith('slope.tif') :
-                            fill_nodata_with_zero(file)
-
-            for file in event.iterdir():
-                if '_s2_' not in file.name and 'epsg4326'  in file.name:
-                    if file.name.endswith('img.tif'):
-                        # EXTRACT THE VV AND VH BANDS FROM THE IMAGE FILE
-                        # TODO this is getting called twice - check if file gets/needs deleting 
-                        create_vv_and_vh_tifs(file)
-
-        # Get the datas info from the folder
-        datas = make_datas(event)
-
-        logger.debug(f'##################### MAKING SINGLE DATASET {event.name} ##############################')
-
-        # Create the ds
-        ds = make_dataset(data_root, event, datas)
-        logger.debug('---ds is a dataset=',isinstance(ds, xr.Dataset))
-
-        # check the ds for excess int16 values 
-        logger.debug('>>>>>>>>>>>checking exceedence for= ',event.name )
-            # Iterate over each variable in the dataset
-        for var_name, dataarray in ds.data_vars.items():
-            logger.debug(f"---Checking variable: {var_name}")
-            check_int16_range(dataarray)
-
-
-        # Check and assign CRS to the dataset
-        logger.debug(f'################### CRS CHECK {event.name} ##############################')
-        # Step 1: Ensure CRS is applied to the dataset
-        if not ds.rio.crs:
-            ds.rio.write_crs("EPSG:4326", inplace=True)  # Replace with desired CRS
-        logger.debug('---ds crs = ', ds.rio.crs)
-
-        # Step 2: Add spatial_ref coordinate
-        crs = ds.rio.crs
-        ds['spatial_ref'] = xr.DataArray(
-            0,
-            attrs={
-                'grid_mapping_name': 'latitude_longitude',
-                'epsg_code': crs.to_epsg() if crs.to_epsg() else "Unknown EPSG",
-                'crs_wkt': crs.to_wkt()
-            }
-        )
-        logger.debug('---ds[spatial ref]',ds['spatial_ref'])
-        logger.debug('---ds[spatial ref] attrs', ds['spatial_ref'].attrs)
-
-        # Step 3: Link spatial_ref to 'data1'
-        ds['data1'].encoding['grid_mapping'] = 'spatial_ref'
-
-
-
-        logger.debug(f',,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,')
-        logger.debug('---dataset= ',ds)
-        logger.debug(f',,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,')
-        
-        # # Link the CRS to the main data variable
-        # ds['data1'].attrs['grid_mapping'] = 'spatial_ref'
-
-        logger.debug(f'################### SAVING {event.name} DS ##############################')
-
-        # save datacube to data_root
-        logger.debug(f"---Saving event datacube : {f'datacube_{event.name}_{VERSION}.nc'}")
-
-
-        output_path = save_path / event.name / f"datacube_{event.name}{VERSION}.nc"
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        if output_path.exists():
-            logger.debug(f"---Overwriting existing file: {output_path}")
-        else:
-            logger.debug(f"---creating save folder: {output_path}")
-        ds.to_netcdf(output_path, mode='w', format='NETCDF4', engine='netcdf4')
-
-        # Check CRS after reopening
-        logger.debug('---ds.attrs= ',ds['spatial_ref'].attrs['epsg_code'])
-        logger.debug(ds['spatial_ref'].attrs.get("epsg_code", "Attribute not found"))
-        logger.debug('---bye bye')
-
-        
-        # TODO COLLAPSE THESE FUNCTIONS
-        for var_name, dataarray in ds.data_vars.items():
-            logger.debug(f"Checking variable nan: {var_name}")
-            nan_check(dataarray)
-        for var_name, dataarray in ds.data_vars.items():
-            logger.debug(f"Checking variable int16: {var_name}")
-            check_int16_range(dataarray)
-
-        logger.debug(f'>>>>>>>>>>>  ds saved for= {event.name} >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n')
-
-
-    logger.debug('>>>finished all events\n')
-
-def make_layerdict_TSX(extracted):
-    '''
-    iterates through the files in the event folder and returns a dict of the datas
-    '''
+    logger.info(f'+++in make_layerdict fn for {extracted.name}')
+    if not extracted.exists():
+        raise FileNotFoundError(extracted)
+    if not extracted.is_dir():
+        logger.warning(f"{extracted} is not a directory; using its parent.")
+        extracted = extracted.parent
+    
+    files = list(extracted.iterdir())
+    if not files:
+        logger.warning(f"{extracted} is empty.")
+        return {}
+    
     datas = {}
+
     for file in extracted.iterdir():
-        # logger.debug(f'---file {file}')
+        logger.info(f'---file {file}')
         if '_vv' in file.name:
             datas[file.name] = 'vv'
-            # logger.debug(f'---+image file found {file}')
+            # logger.info(f'---+image file found {file}')
         elif '_vh' in file.name:
             datas[file.name] = 'vh'
-            # logger.debug(f'---+dem file found {file}')
+            # logger.info(f'---+dem file found {file}')
         elif '4326_slope.tif' in file.name:
             datas[file.name] = 'slope'   
-            # logger.debug(f'---+slope file found {file}')
+            # logger.info(f'---+slope file found {file}')
         elif 'final_mask.tif' in file.name:
             datas[file.name] = 'mask'
-            # logger.debug(f'---+mask file found {file}')
+            # logger.info(f'---+mask file found {file}')
         elif 'final_extent.tif' in file.name:
             datas[file.name] = 'extent'
-            # logger.debug(f'---+valid file found {file}')
+            # logger.info(f'---+valid file found {file}')
 
-    #logger.debug('---datas ',datas)
+    logger.info(f'---datas {datas}')
     return datas
 
-    logger.debug("\n+++ Datacube Health Check Completed +++")
-
-
-def make_datas(event):
-    '''
-    iterates through the files in the event folder and returns a dict of the datas
-    '''
-    datas = {}
-    for file in event.iterdir():
-        # logger.debug(f'---file {file}')
-        if 'epsg4326' in file.name and '_s2_' not in file.name:
-            if 'elevation.tif' in file.name:
-                # logger.debug(f'---elevation file found {file}')    
-                datas[file.name] = 'dem'
-            elif 'slope.tif' in file.name:
-                # logger.debug(f'---slope file found {file}')    
-                datas[file.name] = 'slope'
-            elif 'msk.tif' in file.name:
-                # logger.debug(f'---mask file found {file}')    
-                datas[file.name] = 'mask'   
-            elif 'valid.tif' in file.name:
-                # logger.debug(f'---valid file found {file}')    
-                datas[file.name] = 'valid'
-            elif 'vv.tif' in file.name:
-                # logger.debug(f'---image vv file found {file}') 
-                datas[file.name] = 'vv'
-            elif 'vh.tif' in file.name:
-                # logger.debug(f'---image vh file found {file}')   
-                datas[file.name] = 'vh'
-    #logger.debug('---datas ',datas)
-    return datas
+    logger.info("\n+++ Datacube Health Check Completed +++")
 
 
 
     
-    logger.debug("\n+++ Datacube Health Check Completed +++")
+    logger.info("\n+++ Datacube Health Check Completed +++")
 
 def make_das_from_layerdict( layerdict, folder):
     dataarrays = []
     layer_names = []
     for tif_file, band_name in layerdict.items():
-        # logger.debug(f'---tif_file= {tif_file}')
-        # logger.debug(f'---band_name= {band_name}')
+        logger.info(f'---tif_file= {tif_file}')
+        logger.info(f'---band_name= {band_name}')
         filepath = folder / tif_file
-        # logger.debug(f'---**************filepath = {filepath.name}')
+        # logger.info(f'---**************filepath = {filepath.name}')
         tiffda = rxr.open_rasterio(filepath)
         nan_check(tiffda)
-        # logger.debug(f'---{band_name}= {tiffda}')   
+        # logger.info(f'---{band_name}= {tiffda}')   
         # check num uniqq values
-        # logger.debug(f"---Unique data: {np.unique(tiffda.data)}")
-        # logger.debug("----unique values:", np.unique(tiffda.values))
+        # logger.info(f"---Unique data: {np.unique(tiffda.data)}")
+        # logger.info("----unique values:", np.unique(tiffda.values))
         dataarrays.append(tiffda)
         layer_names.append(band_name)
 # 
@@ -779,21 +647,21 @@ def make_das_from_layerdict( layerdict, folder):
     
 def check_int16_range(dataarray):
     # TAKES A DATAARRAY NOT A DATASET
-    #logger.debug("+++in small int16 range check fn+++")
+    #logger.info("+++in small int16 range check fn+++")
     int16_min, int16_max = np.iinfo(np.int16).min, np.iinfo(np.int16).max
     if (dataarray < int16_min).any() or (dataarray > int16_max).any():
-        logger.debug(f"---Warning: Values out of int16 range found (should be between {int16_min} and {int16_max}).")
+        logger.info(f"---Warning: Values out of int16 range found (should be between {int16_min} and {int16_max}).")
         # Calculate actual min and max values in the array
         actual_min = dataarray.min().item()
         actual_max = dataarray.max().item()
         
-        logger.debug(f"---Warning: Values out of int16 range found (should be between {int16_min} and {int16_max}).")
-        logger.debug(f"---Minimum value found: {actual_min}")
-        logger.debug(f"---Maximum value found: {actual_max}")
+        logger.info(f"---Warning: Values out of int16 range found (should be between {int16_min} and {int16_max}).")
+        logger.info(f"---Minimum value found: {actual_min}")
+        logger.info(f"---Maximum value found: {actual_max}")
         return False
     
     # else:
-    #     logger.debug(f"---no exceedances int16.")
+    #     logger.info(f"---no exceedances int16.")
 
     # Optional: Replace NaN and Inf values if necessary
     # dataarray = dataarray.fillna(0)  # Replace NaN with 0 or another appropriate value
@@ -801,95 +669,96 @@ def check_int16_range(dataarray):
 
 def nan_check(nparray):
     if np.isnan(nparray).any():
-        logger.debug("----Warning: NaN values found in the data.")
+        logger.info("----Warning: NaN values found in the data.")
         return False
     else:
-        logger.debug("----NO NANS FOUND")
+        logger.info("----NO NANS FOUND")
         return True
 
 def create_event_datacube_TSX(extracted_folder, mask_code, VERSION="v1"):
     '''
     An xarray dataset is created for the event folder and saved as a .nc file.
     '''
-    logger.debug(f'+++++++++++ IN CREAT EVENT DATACUBE TSX {extracted_folder.name}+++++++++++++++++')
+    logger.info(f'+++++++++++ IN CREAT EVENT DATACUBE TSX {extracted_folder.name}+++++++++++++++++')
     # FIND THE EXTRACTED FOLDER
     # extracted_folder = list(event.rglob(f'*{mask_code}_extracted'))[0]
 
-    logger.debug(f'---extracted-folder = {extracted_folder}')
-    logger.debug(f'---mask code= {mask_code}')
+    logger.info(f'---extracted-folder = {extracted_folder}')
+    logger.info(f'---mask code= {mask_code}')
     layerdict = make_layerdict_TSX(extracted_folder)
 
-    logger.debug(f'---making das from layerdict= {layerdict}')
+    logger.info(f'---making das from layerdict= {layerdict}')
     dataarrays, layer_names = make_das_from_layerdict( layerdict, extracted_folder)
 
-    # logger.debug(f'---CHECKING DATAARRAY LIST')
+    # logger.info(f'---CHECKING DATAARRAY LIST')
     # check_dataarray_list(dataarrays, layer_names)
 
-    logger.debug(f'---CREATING CONCATERNATED DATASET')
+    logger.info(f'---CREATING CONCATERNATED DATASET')
     da = xr.concat(dataarrays, dim='layer').astype('float32')   
     da = da.assign_coords(layer=layer_names)
 
     # If the 'band' dimension is unnecessary (e.g., single-band layers), squeeze it out
     if 'band' in da.dims and da.sizes['band'] == 1:
-        logger.debug('---Squeezing out the "band" dimension')
+        logger.info('---Squeezing out the "band" dimension')
         da = da.squeeze('band') 
 
-    # logger.debug_dataarray_info(da)
+    # logger.info_dataarray_info(da)
 
     #######   CHUNKING ############
     # da = da.chunk({'x': 256, 'y': 256, 'layer': 1})
-    # logger.debug('---Rechunked datacube')  
+    # logger.info('---Rechunked datacube')  
 
     #######   SAVING ############
     output_path = extracted_folder / f"{mask_code}.nc"
     da.to_netcdf(output_path, mode='w', format='NETCDF4', engine='netcdf4')
     
-    logger.debug(f'>>>>>>>>>>>  ds saved for= {extracted_folder.name} bye bye >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n')
+    logger.info(f'>>>>>>>>>>>  ds saved for= {extracted_folder.name} bye bye >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n')
 
-def create_event_datacube_CopernicusDl(event, mask_code, VERSION="v1"):
+def create_event_datacube_copernicus(event, image_code, VERSION="v1"):
     '''
     An xarray dataset is created for the event folder and saved as a .nc file.
     '''
-    logger.debug(f'+++++++++++ IN CREAT EVENT DATACUBE TSX INF {event.name}+++++++++++++++++')
+    logger.info(f'+++++++++++ IN CREAT EVENT DATACUBE COPERNCUS {event.name}+++++++++++++++++')
     # FIND THE EXTRACTED FOLDER
-    logger.debug(f'---mask code= {mask_code}')
-    extracted_folder = list(event.rglob(f'*{mask_code}_extracted'))[0]
-    logger.debug(f'---extrated folder = {extracted_folder}')
-    layerdict = make_layerdict_TSX(extracted_folder)
+    logger.info(f'---image code= {image_code}')
+    extracted_folder = event / f'{image_code}_extracted'
+    logger.info(f'---extracted folder = {extracted_folder}')
+    layerdict = make_layerdict(extracted_folder)
 
-    logger.debug(f'---making das from layerdict= {layerdict}')
+    logger.info(f'---making das from layerdict= {layerdict}')
+
     dataarrays, layer_names = make_das_from_layerdict( layerdict, extracted_folder)
 
-    logger.debug(f'---CHECKING DATAARRAY LIST')
+    logger.info(f'---CHECKING DATAARRAY LIST')
     # check_dataarray_list(dataarrays, layer_names)
-    # logger.debug('---dataarrays list = ',dataarrays) 
-    logger.debug(f'---CREATING CONCATERNATED DATASET')
+    logger.info(f'---dataarrays list = {dataarrays}') 
+    logger.info(f'---CREATING CONCATERNATED DATASET')
     da = xr.concat(dataarrays, dim='layer').astype('float32')   
     da = da.assign_coords(layer=layer_names)
 
     # If the 'band' dimension is unnecessary (e.g., single-band layers), squeeze it out
     if 'band' in da.dims and da.sizes['band'] == 1:
-        # logger.debug('---Squeezing out the "band" dimension')
+        # logger.info('---Squeezing out the "band" dimension')
         da = da.squeeze('band') 
 
-    # logger.debug_dataarray_info(da)
+    # logger.info_dataarray_info(da)
 
     #######   CHUNKING ############
     # da = da.chunk({'x': 256, 'y': 256, 'layer': 1})
-    # logger.debug('---Rechunked datacube')  
+    # logger.info('---Rechunked datacube')  
 
     #######   SAVING ############
-    output_path = extracted_folder / f"{mask_code}.nc"
+    output_path = extracted_folder / f"{image_code}.nc"
     da.to_netcdf(output_path, mode='w', format='NETCDF4', engine='netcdf4')
     
-    logger.debug(f'##################  ds saved for= {event.name} bye bye #################\n')
+    logger.info(f'##################  ds saved for= {event.name} bye bye #################\n')
 
 # WORK ON DEM
 def match_dem_to_mask(sar_image, dem, output_path):
     """
     Matches the DEM to the SAR image grid by enforcing exact alignment of transform, CRS, and dimensions.
     """
-    logger.debug('+++in match_dem_to_sar fn')
+    logger.info('+++in match_dem_to_sar fn')
     
 
     output_path.unlink(missing_ok=True)  # Deletes the file if it exists
@@ -897,13 +766,13 @@ def match_dem_to_mask(sar_image, dem, output_path):
     with rasterio.open(sar_image) as sar:
         sar_transform = sar.transform
         sar_crs = sar.crs
-        logger.debug(f"---SAR CRS: {sar_crs}")
+        logger.info(f"---SAR CRS: {sar_crs}")
         sar_width = sar.width
         sar_height = sar.height
 
     # Open the DEM to reproject and align it
     with rasterio.open(dem) as dem_src:
-        logger.debug(f"---DEM CRS: {dem_src.crs}")
+        logger.info(f"---DEM CRS: {dem_src.crs}")
         dem_meta = dem_src.meta.copy()
         # Update DEM metadata to match SAR grid
         dem_meta.update({
@@ -914,7 +783,7 @@ def match_dem_to_mask(sar_image, dem, output_path):
             'dtype': "float32"
         })
         with rasterio.open(output_path, 'w', **dem_meta) as dst:
-            logger.debug(f'---output_path= {output_path.name}')
+            logger.info(f'---output_path= {output_path.name}')
             # Reproject each band of the DEM
             for i in range(1, dem_src.count + 1):
                 reproject(
@@ -927,7 +796,7 @@ def match_dem_to_mask(sar_image, dem, output_path):
                     resampling=Resampling.nearest  # Nearest neighbor for discrete data like DEM
                 )
 
-    logger.debug(f"Reprojected and aligned DEM saved to: {output_path}")
+    logger.info(f"Reprojected and aligned DEM saved to: {output_path}")
 
 def create_slope_from_dem(target_file, dst_file):
     cmd = [
@@ -938,9 +807,9 @@ def create_slope_from_dem(target_file, dst_file):
     # Execute the command
     try:
         subprocess.run(cmd, check=True)
-        logger.debug("Slope calculation completed.")
+        logger.info("Slope calculation completed.")
     except subprocess.CalledProcessError as e:
-        logger.debug(f"Error: {e}")
+        logger.info(f"Error: {e}")
 
 # CLIPPING AND ALIGNMENT
 def clip_image_to_mask_gdal(input_raster, mask_raster, output_raster):
@@ -959,7 +828,7 @@ def clip_image_to_mask_gdal(input_raster, mask_raster, output_raster):
     mask_width = mask_ds.RasterXSize
     mask_height = mask_ds.RasterYSize
 
-    logger.debug(f"---Mask dimensions: width={mask_width}, height={mask_height}")
+    logger.info(f"---Mask dimensions: width={mask_width}, height={mask_height}")
 
     # Configure warp options to match the mask's resolution and extent
     options = gdal.WarpOptions(
@@ -976,23 +845,23 @@ def clip_image_to_mask_gdal(input_raster, mask_raster, output_raster):
     )
     gdal.Warp(output_raster, input_raster, options=options)
 
-    logger.debug(f"Clipped raster saved to: {output_raster}")
+    logger.info(f"Clipped raster saved to: {output_raster}")
     mask_ds = None  # Close the mask dataset
     # Delete the original SAR image
     Path(input_raster).unlink()
 
 
-    logger.debug(f"Clipped raster saved to: {output_raster}")
+    logger.info(f"Clipped raster saved to: {output_raster}")
 
 def clean_mask(mask_path, output_path):
         with rasterio.open(mask_path) as src:
             data = src.read(1)
-            logger.debug(f">>> Original mask stats: min={data.min()}, max={data.max()}, unique={np.unique(data)}")
+            logger.info(f">>> Original mask stats: min={data.min()}, max={data.max()}, unique={np.unique(data)}")
 
             meta = src.meta.copy()
             # remove numbers greater than 1
             data[data > 1] = 0
-            logger.debug(f"--- Modified mask unique values: {np.unique(data)}")
+            logger.info(f"--- Modified mask unique values: {np.unique(data)}")
 
             assert (data.min() == 0 and data.max() == 1) and len(np.unique(data)) == 2
             meta.update(dtype='uint8')  # Ensure uint8 format
@@ -1001,10 +870,10 @@ def clean_mask(mask_path, output_path):
             with rasterio.open(output_path, "w", **meta) as dst:
                 dst.write(data.astype('uint8'), 1)  # Ensure uint8 format
 
-        logger.debug(f"Cleaned and aligned mask saved to: {output_path}")
+        logger.info(f"Cleaned and aligned mask saved to: {output_path}")
 
 def align_image_to_mask(sar_image, mask, aligned_image):
-    logger.debug('+++in align_image_to_mask fn')
+    logger.info('+++in align_image_to_mask fn')
 
     # Open the mask to get CRS, transform, and dimensions
     with rasterio.open(mask) as mask_src:
@@ -1013,7 +882,7 @@ def align_image_to_mask(sar_image, mask, aligned_image):
         mask_width = mask_src.width
         mask_height = mask_src.height
         mask_res = (abs(mask_transform[0]), abs(mask_transform[4]))  # Ensure positive resolution
-        logger.debug('---mask ok')
+        logger.info('---mask ok')
 
     # Open the SAR image to calculate alignment
     with rasterio.open(sar_image) as sar_src:
@@ -1027,7 +896,7 @@ def align_image_to_mask(sar_image, mask, aligned_image):
             'width': width,
             'height': height
         })
-        logger.debug('---sar ok')
+        logger.info('---sar ok')
 
         # Write the aligned SAR image
         with rasterio.open(aligned_image, 'w', **sar_meta) as aligned_dst:
@@ -1042,22 +911,22 @@ def align_image_to_mask(sar_image, mask, aligned_image):
                     resampling=Resampling.nearest
                 )
 
-    logger.debug(f"---Aligned SAR image saved to: {aligned_image}")
+    logger.info(f"---Aligned SAR image saved to: {aligned_image}")
 
 # probably not needed
 def process_terraSARx_data(data_root):
     '''
     makes a 'datacube_files' folder in each event folder and copies the necessary files to it
     '''
-    logger.debug('+++in process_terraSARx_data fn')
+    logger.info('+++in process_terraSARx_data fn')
     #image = list(Path('.').rglob("IMAGE_HH_*"))
-    #logger.debug('---image= ',image)
+    #logger.info('---image= ',image)
 
     target_filename = "DEM_MAP.tif"
 
     for event in data_root.iterdir():
         if event.is_dir() and any(event.iterdir()):
-            logger.debug(f"******* {event.name}   PREPARING TIFS ********")
+            logger.info(f"******* {event.name}   PREPARING TIFS ********")
             datacube_files_path = event / 'datacube_files'
             if datacube_files_path.exists() :
                 shutil.rmtree(datacube_files_path)  # Delete the directory and all its contents
@@ -1069,7 +938,7 @@ def process_terraSARx_data(data_root):
             # STEP THROUGH FILENAMES WE WANT 
             filename_parts = ['DEM_MAP', 'IMAGE_HH']
             for i in filename_parts:
-                # logger.debug(f'---looking for files starting with {i}')
+                # logger.info(f'---looking for files starting with {i}')
                 pattern = re.compile(f'^{re.escape(i)}')  
 
                 # COPY THEM TO THE EVENT DATA CUBE FOLDER
@@ -1079,7 +948,7 @@ def process_terraSARx_data(data_root):
                     # if True:    
                         target = datacube_files_path / file_path.name
                         # if Path(target).exists():
-                        #     logger.debug('---file already exists') 
+                        #     logger.info('---file already exists') 
                         #     continue
                         shutil.copy(file_path, target)
             
