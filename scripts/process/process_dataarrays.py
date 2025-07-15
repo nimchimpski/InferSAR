@@ -862,7 +862,7 @@ def tile_datacube_rxr(datacube_path, save_tiles_path, tile_size, stride, norm_fu
     return num_tiles, num_saved, num_has_nans, num_novalid_layer, num_novalid_pixels, num_nomask_pixels, num_skip_nomask_px, num_failed_norm, num_not_256, num_px_outside_extent
 
 # COMPARE THIS TO THE ABOVE FUNCTION - SHOULD ONLY NEED ONE, WITH CONDITIONS
-def tile_datacube_rxr_inf(datacube_path, save_tiles_path, tile_size, stride, norm_func, stats, percent_non_flood, inference=False):
+def tile_datacube_rxr_inf(datacube_path, save_tiles_path, tile_size, stride,  percent_non_flood, inference):
     """
     Tile a DATASET (extracted from a dataarray is selected) and save to 'tiles' dir in same location.
     'ARGs:
@@ -872,9 +872,6 @@ def tile_datacube_rxr_inf(datacube_path, save_tiles_path, tile_size, stride, nor
     TODO add json file with metadata for each tile inv mask and anal_ext pixel count etc
     """
     logger.info('+++++++in tile_datacube rxr fn ++++++++')
-    global_min, global_max = stats
-    logger.info(f'---FILE global_min= { global_min}')
-    logger.info(f'---FILE global_max= { global_max}')
     if stride != tile_size:
         logger.info(f'--stride = {stride}')
     num_tiles = 0
@@ -968,16 +965,6 @@ def tile_datacube_rxr_inf(datacube_path, save_tiles_path, tile_size, stride, nor
 
             # logger.info("---logger.infoING DA INFO B4 NORM-----")
             # logger.info_dataarray_info(tile)
-            normalized = False
-            # normalized_tile, normalized = normalize_inmemory_tile(tile)
-            # logger.info('---norm_func= ', norm_func)  
-            if norm_func == 'logclipmm_g':
-                normalized_tile, normalized = log_clip_minmaxnorm(tile, global_min, global_max) 
-        
-            if not normalized:
-                logger.info('---Failed to normalize tile')
-                num_failed_norm += 1
-                continue
 
 
             tile_name = f"tile_{datacube_path.parent.name}_{x_start}_{y_start}.tif"
@@ -1007,13 +994,13 @@ def tile_datacube_rxr_inf(datacube_path, save_tiles_path, tile_size, stride, nor
 
             ######### SAVE TILE ############
             # Save layer names as metadata
-            layer_names = list(normalized_tile.coords["layer"].values)
+            layer_names = list(tile.coords["layer"].values)
             layer_names = [str(name) for name in layer_names]
             # get crs and transform
-            # crs = normalized_tile.rio.crs
+            # crs = tile.rio.crs
             crs = "EPSG:4326"
-            transform = normalized_tile.rio.transform()
-            tile_data = normalized_tile.values
+            transform = tile.rio.transform()
+            tile_data = tile.values
             num_layers, height, width = tile_data.shape
             # logger.info('---layer_names= ', layer_names)
 
@@ -1031,14 +1018,7 @@ def tile_datacube_rxr_inf(datacube_path, save_tiles_path, tile_size, stride, nor
                     dst.write(tile_data[i - 1], i)
                     dst.set_band_description(i, layer_names[i-1])  # Add band descriptions
             num_saved += 1
-            inference_tiles.append(normalized_tile)
-
-            if inference:
-                # Save metadata for stitching
-                metadata_path = save_tiles_path / "tile_metadata.json"
-                with open(metadata_path, "w") as f:
-                    json.dump(tile_metadata, f, indent=4)
-                # logger.info(f"---Saved metadata to {metadata_path}")
+            inference_tiles.append(tile)
 
     if inference:
         logger.info(f'---end of tiling datacube function')

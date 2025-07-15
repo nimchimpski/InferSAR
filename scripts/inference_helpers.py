@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import rasterio
+import pandas as pd
 from tqdm import tqdm
 from collections import OrderedDict
 
@@ -125,10 +126,7 @@ def make_prediction_tiles_new(tile_folder, metadata, model, device, threshold, s
     return predictions_folder
 
 
-def stitch_tiles(metadata, prediction_tiles, save_path, image):
-    ''''
-    metadata =list
-    '''
+def stitch_tiles(metadata: list, prediction_tiles, save_path, image):
     # GET CRS AND TRANSFORM
     with rasterio.open(image) as src:
         transform = src.transform
@@ -212,3 +210,29 @@ def clean_checkpoint_keys(state_dict):
             new_key = key
         cleaned_state_dict[new_key] = value
     return cleaned_state_dict
+
+# we need a incference_list.csv for the dataloader to work.
+# create csv from json tiling metadata file. Extract the first vlue (tile name ) of each item. 
+# create a second row in the csv with dummy vales for masks.
+
+def create_inference_csv(metadata):
+    """    
+    Args:
+        metadata (list): List of dictionaries containing tile information.
+    """
+
+    # Extract tile names and create dummy mask values
+    tile_names = [tile_info["tile_name"] for tile_info in metadata]
+    dummy_masks = ["dummy_mask" for _ in tile_names]  # Dummy values for masks
+
+    # Create a DataFrame
+    df = pd.DataFrame({
+        "image": tile_names,
+        "mask": dummy_masks
+    })
+    return df
+
+def write_df_to_csv(df, csv_path):
+        # Save to CSV
+        df.to_csv(csv_path, index=False)
+        logger.info(f"---Inference CSV created at {csv_path}")

@@ -16,12 +16,13 @@ from dotenv import load_dotenv
 import sys
 # import handle interupt
 import signal
+import json
 
 # .............................................................
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, Subset
 from torch.utils.data.dataloader import default_collate
 from torchvision.transforms import functional as Func
 from torchvision import transforms
@@ -52,7 +53,7 @@ from scripts.process.process_dataarrays import tile_datacube_rxr_inf
 from scripts.train.train_helpers import is_sweep_run, pick_device
 from scripts.train.train_classes import  UnetModel,   Segmentation_training_loop, Sen1Dataset
 from scripts.train.train_functions import  loss_chooser, wandb_initialization, job_type_selector, create_subset
-from scripts.inference_helpers import make_prediction_tiles, stitch_tiles, clean_checkpoint_keys
+from scripts.inference_helpers import make_prediction_tiles, stitch_tiles, clean_checkpoint_keys, create_inference_csv, write_df_to_csv
 
 start = time.time()
 
@@ -79,9 +80,6 @@ signal.signal(signal.SIGINT, handle_interrupt)
 
 def main(train, test, inference, config):
 
-    if inference:
-            logger.info(f'config mode = {config}')
-
     if test and train:
         raise ValueError("You can only specify one of --train or --test.")
     if  test:
@@ -92,6 +90,7 @@ def main(train, test, inference, config):
         job_type =  "test"
     elif inference:
         job_type = "inference"
+
     logger.info(f"train={train}, test={test}, inference={inference}\n, config = ")
 
     device = pick_device()                       
@@ -107,24 +106,24 @@ def main(train, test, inference, config):
     repo_root = Path(__file__).resolve().parents[1]
     logger.info(f"repo root: {repo_root}")
     env_file = repo_root / ".env"
+
     dataset_path = repo_root / "data" / "4final" / "train_input" 
     if test:
         dataset_path = repo_root / "data" / "4final" / "test_input"
-
     ckpt_folder = repo_root / "checkpoints" / "ckpt_input"
     stitched_image = repo_root / "results"
 
     project = "mac_py_package"
     dataset_name = "sen1floods11"  # "sen1floods11" or "copernicus_floods"
     image_code = "code"  # Placeholder for image code, can be set in config
+
     train_list = dataset_path / "flood_train_data.csv"
     val_list = dataset_path / "flood_valid_data.csv"
     test_list = dataset_path / "flood_test_data.csv"
     run_name = "_"
-    mode = "train"
     input_is_linear = False   # True for copernicus direct downloads, False for Sen1floods11
     subset_fraction = 1
-    bs = 8
+    batch_size = 8
     max_epoch =15
     early_stop = True
     patience=3
@@ -144,10 +143,9 @@ def main(train, test, inference, config):
     tile_size = 256 # OVERRIDDDEN IN CONFIG
     norm_func = 'logclipmm_g'
 
-    predict_input = Path("/Users/alexwebb/laptop_coding/floodai/InferSAR/data/4final/predict_input")
+
     minmax_path = Path("/Users/alexwebb/laptop_coding/floodai/InferSAR/configs/global_minmax_INPUT/global_minmax.json")
     
-    output_folder = predict_input # OVERRIDDDEN IN CONFIG
     output_filename = '_name' # OVERRIDDDEN IN CONFIG
     db_min = -30.0
     db_max = 0.0
@@ -156,6 +154,24 @@ def main(train, test, inference, config):
     MAKE_TILES = 0
     stride = tile_size
     #.......................................................
+    if inference:
+        predict_input = Path("/Users/alexwebb/laptop_coding/floodai/InferSAR/data/4final/predict_input")
+        input_folder = predict_input
+        file_list = predict_input / "predict_tile_list.csv"
+        MAKE_TIFS = 0
+        MAKE_DATAARRAY = 1
+        MAKE_TILES = 1
+        sensor = 'sensor'
+        date = 'date'
+        subset_fraction = 1
+        batch_size = 1
+        shuffle = False
+        input_is_linear = True
+        # TODO GET ABOVE VALUES FROM SOMEWHERE EG FILENAME
+        stitched_image = input_folder / f'{sensor}_{image_code}_{date}_{tile_size}_{threshold}{output_filename}_WATER_AI.tif'
+        if stitched_image.exists():
+            logger.info(f"---overwriting existing file! : {stitched_image}")
+        logger.info(f'config mode = {config}')
 
     if config:
         config_path = Path('/Users/alexwebb/laptop_coding/floodai/InferSAR/configs/floodaiv2_config.yaml')
@@ -174,18 +190,18 @@ def main(train, test, inference, config):
     else:
         logger.info("Warning: .env not found; using shell environment")
 
-    if user_loss != 'focal':
-        focal_alpha = None
-        focal_gamma = None
-    if user_loss != 'bce_dice':
-        bce_weight = None
+    # if user_loss != 'focal':
+    #     focal_alpha = None
+    #     focal_gamma = None
+    # if user_loss != 'bce_dice':
+    #     bce_weight = None
 
     #####       WAND INITIALISEATION + CONFIG       ###########
     wandb_config = {
         "name": run_name,
         "dataset_name": dataset_name,
         "subset_fraction": subset_fraction,
-        "batch_size": bs,
+        "batch_size":batch_size,
         "user_loss": user_loss,
         "focal_alpha": focal_alpha,
         "focal_gamma": focal_gamma,
@@ -216,44 +232,37 @@ def main(train, test, inference, config):
     if ckpt is None:
         raise FileNotFoundError(f"No checkpoint found in {ckpt_folder}")
 
+
+
     #########    TRAIN / TEST - CREATE DATA LOADERS    #########
 
     if  train:
-        logger.info(" Creating data loaders")
-        train_dl = create_subset(mode, train_list, dataset_path, 'train', subset_fraction, bs, num_workers, persistent_workers, input_is_linear)
-        val_dl = create_subset(mode, val_list, dataset_path, 'val', subset_fraction, bs, num_workers, persistent_workers, input_is_linear)
+        input_folder = dataset_path / 'train_input'
+        file_list = train_list
 
     if test:
-        test_dl = create_subset(mode, test_list, dataset_path, 'test', subset_fraction, bs, num_workers, persistent_workers, input_is_linear)
+        input_folder = dataset_path / 'test_input'
+        file_list = test_list
 
-        
-    ########     INITIALISE THE MODEL     #########
-    model = UnetModel(encoder_name='resnet34', in_channels=in_channels, classes=1, pretrained=PRETRAINED).to(device)
+    save_tiles_path = input_folder /  f'{image_code}_tiles'
+    metadata_path = save_tiles_path / 'tile_metadata_pth.json'
+
+
+
 
     # CREATE THE EXTRACTED FOLDER
     extracted = predict_input / f'{image_code}_extracted'
-    save_tiles_path = predict_input /  f'{image_code}_tiles'
     if save_tiles_path.exists():
         # logger.info(f" Deleting existing tiles folder: {save_tiles_path}")
         # delete the folder and create a new one
         shutil.rmtree(save_tiles_path)
         save_tiles_path.mkdir(exist_ok=True, parents=True)
 
-#  #+++++++++++++++++ INFERENCE - SETUP ++++++++++
-    if inference:
-        MAKE_TIFS = 0
-        MAKE_DATAARRAY = 1
-        MAKE_TILES = 1
-        sensor = 'sensor'
-        date = 'date'
-        # TODO GET ABOVE VALUES FROM SOMEWHERE EG FILENAME
-        stitched_image = output_folder / f'{sensor}_{image_code}_{date}_{tile_size}_{threshold}{output_filename}_WATER_AI.tif'
-        logger.info(f'output filename: {stitched_image.name}')
-        if stitched_image.exists():
-            logger.info(f"---overwriting existing file! : {stitched_image}")
 
     logger.info(f' MAKE_TIFS = {MAKE_TIFS}, MAKE_DATAARRAY = {MAKE_DATAARRAY}, MAKE_TILES = {MAKE_TILES}   ')
+
     if MAKE_TIFS:
+        pass
         # if extracted.exists():
             # logger.info(f"--- Deleting existing extracted folder: {extracted}")
             # delete the folder and create a new one
@@ -292,10 +301,6 @@ def main(train, test, inference, config):
         # fnal_extent = extracted / f'{image_code}_32_final_extent.tif'
         # make_float32_inf(reproj_extent, final_extent
 
-        # GET THE TRAINING MIN MAX STATS
-        statsdict =  read_minmax_from_json(minmax_path)
-        stats = (statsdict["min"], statsdict["max"])
-        logger.info(f'---stats: {stats}')
 
     if MAKE_DATAARRAY:
         create_event_datacube_copernicus(predict_input, image_code)
@@ -307,11 +312,19 @@ def main(train, test, inference, config):
 
     if MAKE_TILES:
         # TILE DATACUBE
-        tiles, metadata = tile_datacube_rxr_inf(cube, save_tiles_path, tile_size=tile_size, stride=stride, norm_func=norm_func, stats=stats, percent_non_flood=0, inference=True) 
-    # logger.info(f"{len(tiles)} tiles saved to {save_tiles_path}")
-    # logger.info(f"{len(metadata)} metadata saved to {save_tiles_path}")
-    # metadata = Path(save_tiles_path) / 'tile_metadata.json'
-        
+        tiles, metadata = tile_datacube_rxr_inf(cube, save_tiles_path, tile_size=tile_size, stride=stride, percent_non_flood=0, inference = inference) 
+
+        with open(metadata_path, "w") as f:
+            json.dump(metadata, f, indent=4)
+        logger.info(f"---Saved metadata to {metadata_path}")
+        logger.info(f"{len(tiles)} tiles saved to {save_tiles_path}")
+        logger.info(f"{len(metadata)} metadata saved to {save_tiles_path}")
+    # metadata = Path(save_tiles_path) / 'tile_metadata_pth.json'
+        inference_list_dataframe = create_inference_csv(metadata)
+        write_df_to_csv(inference_list_dataframe, file_list)
+    
+        ########     INITIALISE THE MODEL     #########
+    model = UnetModel(encoder_name='resnet34', in_channels=in_channels, classes=1, pretrained=PRETRAINED).to(device)
     # LOAD THE CHECKPOINT
     checkpoint = torch.load(ckpt)
 
@@ -321,26 +334,32 @@ def main(train, test, inference, config):
     # LOAD THE MODEL STATE DICT
     model.load_state_dict(cleaned_state_dict)
 
-    bs = 1,
-    shuffle = False,
-    input_is_linear = True
+    
+    logger.info(" Creating data loaders")
+    logger.info(f"---input_folder: {input_folder}")
+    logger.info(f"---file_list: {file_list}")
+    logger.info(f'---input_is_linear: {input_is_linear}')
 
-    # CREATE THE INFERENCE DATALOADER
-    infer_ds = Sen1Dataset(
-        mode='inference',
-        csv_path=save_tiles_path / 'tile_metadata.json',
-        root_dir=save_tiles_path,
+
+    # TRAIN + INFERENCE : CREATE THE  DATALOADER
+    dataset = Sen1Dataset(
+        job_type = job_type,
+        input_folder = input_folder,
+        csv_path = file_list,
+        image_code=image_code,
         input_is_linear=input_is_linear,
         db_min=db_min,
         db_max=db_max)
     
+    subset_indices = random.sample(range(len(dataset))), int(subset_fraction * len(dataset))
+    subset = Subset(dataset, subset_indices)
         # MAKE DATALOADER FROM DATASET
 
-    infer_dl = DataLoader( infer_ds,
-        batch_size=bs,  # Batch size of 1 for inference 
-        shuffle=shuffle,  # No need to shuffle for inference
-        num_workers=4,  # Adjust based on your system
-        persistent_workers=True,  # Keep workers alive for faster loading   
+    dataloader = DataLoader( subset,
+        batch_size = batch_size,  # Batch size of 1 for inference 
+        shuffle = shuffle,  # No need to shuffle for inference
+        num_workers = 4,  # Adjust based on your system
+        persistent_workers = True,  # Keep workers alive for faster loading   
         )
 
     # DEFINE THE PREDICTION TILES FOLDER
@@ -351,8 +370,9 @@ def main(train, test, inference, config):
         shutil.rmtree(predictions_folder)
     predictions_folder.mkdir(exist_ok=True)
 
+    #  # MAKE PREDICTION TILES
     with torch.no_grad():
-        for imgs, _, valids, fnames in tqdm(infer_dl, desc="Predict"):
+        for imgs, _, valids, fnames in tqdm(dataloader, desc="Predict"):
             imgs   = imgs.to(device)            # [B,2,H,W]
             logits = model(imgs)
             probs  = torch.sigmoid(logits).cpu()  # back to CPU for numpy/rasterio
@@ -372,7 +392,7 @@ def main(train, test, inference, config):
                     dst.write(out.astype("float32"), 1)   
     # STITCH PREDICTION TILES
     input_image = next(predict_input.rglob("*.tif"), None) if name in ['vv', 'vh'] else None
-    prediction_img = stitch_tiles(metadata, predictions_folder, stiched_img, input_image)  
+    stitch_tiles(metadata, predictions_folder, input_folder, input_image)  
 
     if train or test:
         ########.     CHOOE LOSS FUNCTION     #########

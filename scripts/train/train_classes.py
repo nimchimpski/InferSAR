@@ -12,6 +12,8 @@ import segmentation_models_pytorch as smp
 import pytorch_lightning as pl
 import csv
 import logging
+from typing import Optional, Tuple, Union, List
+
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.callbacks import ModelCheckpoint,EarlyStopping
 # from iglovikov_helper_functions.dl.pytorch.lightning import find_average
@@ -215,51 +217,47 @@ class FloodDataset(Dataset):
         # return model_input.float(), val_mask.float()
 
 
-class Sen1Dataset(Dataset):
-    def __init__(self, mode: str, csv_path: Path, root_dir: Path, input_is_linear: bool, db_min: float = -30.0, db_max: float = 0.0, ):
+class Sen1Dataset_OLD(Dataset):
+    def __init__(self, job_type: str, input_folder: Path, csv_path: Path,image_code: str,  input_is_linear: bool, db_min: float = -30.0, db_max: float = 0.0, ):
         """
-        csv_path: Path to one of the split CSVs (train.csv / val.csv / test.csv)
-        root_dir: Path to the v1.1/data/ folder
+        csv_path: Path to one of the split CSVs (train.csv / val.csv / test.csv/ pred.csv)
         """
-
-
-        self.root = root_dir
+        self.input_folder = input_folder
+        self.image_code= image_code
         self.db_min = db_min
         self.db_max = db_max
         self.input_is_linear = input_is_linear
-        self.mode = mode
+        self.job_type = job_type
         valid_thresh = 0.8  # Minimum fraction of valid pixels to keep a tile
         self.img_paths  = []
         self.mask_paths = []
         orig_imgs = []
         orig_masks = []
-        logger.info(f"---Dataset mode: {self.mode}")
+        logger.info(f"---Dataset job_type: {self.job_type}")
         with open(csv_path, newline='') as f:
             reader = csv.reader(f)
             # assume the columns are named exactly "image" and "mask"
+            #  MAKE LISTS OF 
             for row in reader:
                 img_rel, mask_rel = row[0], row[1]
-                orig_imgs.append(self.root / 'S1Hand' / img_rel)
-                orig_masks.append(self.root / 'LabelHand' / mask_rel)
+                orig_imgs.append(self.input_folder / f'{image_code}_tiles' / img_rel)
+                orig_masks.append(self.input_folder / f'{image_code}_tiles' / mask_rel)
             
-
         if len(orig_imgs) != len(orig_masks):
             raise ValueError(
                 f"Split file {csv_path} has {len(orig_imgs)} images "
                 f"but {len(orig_masks)} masks."
             )
-        
-        for img_pth, mask_pth in zip(orig_imgs, orig_masks):
-            with rasterio.open(img_pth) as src:
-                valid = src.dataset_mask().astype(bool)
-                # dataset_mask()==1 where data is valid, 0 where nodata or outside the swath
-                if np.sum(valid) >= valid_thresh:
-                    self.img_paths.append(img_pth)
-                    self.mask_paths.append(mask_pth)
-                    
+        if job_type != 'inference':
+            for img_pth, mask_pth in zip(orig_imgs, orig_masks):
+                with rasterio.open(img_pth) as src:
+                    valid = src.dataset_mask().astype(bool)
+                    # dataset_mask()==1 where data is valid, 0 where nodata or outside the swath
+                    if np.sum(valid) >= valid_thresh:
+                        self.img_paths.append(img_pth)
+                        self.mask_paths.append(mask_pth)
 
-                assert len(self.img_paths) == len(self.mask_paths)
-
+                    assert len(self.img_paths) == len(self.mask_paths)
 
     def __len__(self):
         return len(self.img_paths)
@@ -267,7 +265,7 @@ class Sen1Dataset(Dataset):
     def __getitem__(self, idx):
         # 1) Load VV & VH
         img_pth = self.img_paths[idx]
-        with rasterio.open(self.root/'S1Hand'/img_pth) as src:
+        with rasterio.open(self.input_folder/ f'{self.image_code}_tiles' /img_pth) as src:
             vv = src.read(1).astype(np.float32)
             vh = src.read(2).astype(np.float32)
             valid = src.dataset_mask().astype(bool)
@@ -301,16 +299,127 @@ class Sen1Dataset(Dataset):
 
         img = np.stack([vv, vh], axis=0)  # shape [2,H,W]
 
-        # 2) Load & binarize mask
-        msk_pth = self.root/'LabelHand'/self.mask_paths[idx]
-        with rasterio.open(msk_pth) as src:
-            raw = src.read(1).astype(np.int64)
-            valid_mask = torch.from_numpy(raw != -1).unsqueeze(0)  # valid pixels are 1, invalid are 0
-            mask = np.where(raw ==  -1, 255, raw)
-            mask = torch.from_numpy(mask.astype(np.float32)).unsqueeze(0)  # Add a channel dimension
-            
+        if self.job_type != 'inference':
+            # 2) Load & binarize mask
+            msk_pth = self.input_folder/ f'{self.image_code}_masks' / self.mask_paths[idx]
+            with rasterio.open(msk_pth) as src:
+                raw = src.read(1).astype(np.int64)
+                valid_mask = torch.from_numpy(raw != -1).unsqueeze(0)  # valid pixels are 1, invalid are 0
+                mask = np.where(raw ==  -1, 255, raw)
+                mask = torch.from_numpy(mask.astype(np.float32)).unsqueeze(0)  # Add a channel dimension
         return (img, mask, valid_mask, img_pth.name)
 
+
+class Sen1Dataset(Dataset):
+    """
+    A Dataset for Sentinel-1 flood segmentation that supports three modes:
+      - "train" / "val":  expects CSV rows [image_rel, mask_rel]
+      - "infer":          expects CSV rows [image_rel, ...], mask_rel is ignored
+    
+    __getitem__ returns:
+      train/val -> (img_tensor [2,H,W], mask_tensor [1,H,W], valid_mask [1,H,W], filename)
+      infer     -> (img_tensor [2,H,W], valid_mask [1,H,W], filename)
+    """
+    def __init__(
+        self,
+        mode: str,
+        csv_path: Path,
+        root_dir: Path,
+        input_is_linear: bool,
+        db_min: float = -30.0,
+        db_max: float =   0.0,
+    ):
+        assert mode in ("train","val","infer"), "mode must be 'train','val', or 'infer'"
+        self.mode            = mode
+        self.root            = root_dir
+        self.input_is_linear = input_is_linear
+        self.db_min          = db_min
+        self.db_max          = db_max
+
+        self.img_paths: List[Path]   = []
+        self.mask_paths: List[Path]  = []
+        self.filenames:  List[str]   = []
+
+        # Read the CSV once at init
+        with open(csv_path, newline="") as f:
+            reader = csv.reader(f)
+            for row in reader:
+                img_rel = row[0]
+                self.img_paths.append(self.root/"S1Hand"/img_rel)
+                self.filenames.append(Path(img_rel).name)
+                if mode in ("train","val"):
+                    mask_rel = row[1]
+                    self.mask_paths.append(self.root/"LabelHand"/mask_rel)
+
+        if mode in ("train","val"):
+            assert len(self.img_paths)==len(self.mask_paths), \
+                f"CSV rows must have both image and mask for mode {mode}"
+
+    def __len__(self) -> int:
+        return len(self.img_paths)
+
+    def __getitem__(
+        self, idx: int
+    ) -> Union[
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor, str],
+        Tuple[torch.Tensor, torch.Tensor, str]
+    ]:
+        # 1) load VV & VH + valid mask
+        img_pth = self.img_paths[idx]
+        with rasterio.open(img_pth) as src:
+            vv    = src.read(1).astype(np.float32)
+            vh    = src.read(2).astype(np.float32)
+            valid = src.dataset_mask().astype(bool)
+
+        # blank out invalid pixels
+        vv[~valid] = np.nan
+        vh[~valid] = np.nan
+
+        # 2) log-transform if needed, clip, then min–max normalize to [0,1]
+        for arr in (vv, vh):
+            if self.input_is_linear:
+                np.clip(arr, 1e-6, None, out=arr)
+                np.log10(arr, out=arr)
+                arr *= 10.0
+            # replace NaN/inf with training bounds
+            np.nan_to_num(
+                arr,
+                copy=False,
+                nan=self.db_min,
+                posinf=self.db_max,
+                neginf=self.db_min,
+            )
+            # clamp and scale
+            np.clip(arr, self.db_min, self.db_max, out=arr)
+            arr -= self.db_min
+            arr /= (self.db_max - self.db_min)
+
+        img_tensor = torch.from_numpy(np.stack([vv, vh], axis=0))
+
+        # 3a) TRAIN / VAL: load & binarize mask
+        if self.mode in ("train","val"):
+            mask_pth = self.mask_paths[idx]
+            with rasterio.open(mask_pth) as src:
+                raw = src.read(1).astype(np.int64)
+            # valid pixels = raw != -1
+            valid_mask = torch.from_numpy((raw != -1).astype(np.float32))
+            # flood mask = 1 where raw==1
+            mask       = torch.from_numpy((raw == 1).astype(np.float32))
+            # add channel dims
+            return (
+                img_tensor, 
+                mask.unsqueeze(0), 
+                valid_mask.unsqueeze(0), 
+                self.filenames[idx]
+            )
+
+        # 3b) INFERENCE: no mask
+        valid_mask = torch.from_numpy(valid.astype(np.float32))
+        return (
+            img_tensor, 
+            valid_mask.unsqueeze(0), 
+            self.filenames[idx]
+        )
 
 class Segmentation_training_loop(pl.LightningModule):
 
