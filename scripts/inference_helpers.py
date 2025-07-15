@@ -48,9 +48,8 @@ def make_prediction_tiles(tile_folder, metadata, model, device, threshold, ):
         # Perform inference
         with torch.no_grad():
             pred = model(tile_tensor)
-            # pred = torch.sigmoid(pred).squeeze().cpu().numpy()  # Convert logits to probabilities
-            pred = torch.sigmoid(pred).squeeze().cpu().numpy()  # Convert logits to probabilities
-            pred = (pred > threshold).astype(np.float32)  # Convert probabilities to binary mask
+            pred = torch.sigmoid(pred).squeeze().cpu().numpy()  
+            pred = (pred > threshold).astype(np.float32)  
             pred[nodata_mask] = 0  # Mask out no-data areas
 
         # Save prediction as GeoTIFF

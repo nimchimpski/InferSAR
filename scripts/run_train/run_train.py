@@ -89,7 +89,7 @@ def main(train, test):
     pl.seed_everything(42, workers=True)
 
     #......................................................
-    # PATHS DEFINITIONS ANd CONSTANTS
+    # USER DEFINITIONS
     repo_root = Path(__file__).resolve().parents[2]
     logger.info(f"repo root: {repo_root}")
     env_file = repo_root / ".env"
@@ -102,6 +102,10 @@ def main(train, test):
 
     project = "mac_py_package"
     dataset_name = "sen1floods11"  # "sen1floods11" or "copernicus_floods"
+    train_list = dataset_path / "flood_train_data.csv"
+    val_list = dataset_path / "flood_valid_data.csv"
+    test_list = dataset_path / "flood_test_data.csv"
+    run_name = "_"
     mode = "train"
     input_is_linear = False   # True for copernicus direct downloads, False for Sen1floods11
     subset_fraction = 1
@@ -124,7 +128,6 @@ def main(train, test):
 
     persistent_workers = num_workers > 0
 
-
     if env_file.exists():
         load_dotenv(env_file)
     else:
@@ -136,14 +139,7 @@ def main(train, test):
     if user_loss != 'bce_dice':
         bce_weight = None
 
-    run_name = "_"
-
-        # Dataset Lists
-    train_list = dataset_path / "flood_train_data.csv"
-    val_list = dataset_path / "flood_valid_data.csv"
-    test_list = dataset_path / "flood_test_data.csv"
-
-        #####       WAND INITIALISEATION + CONFIG       ###########
+    #####       WAND INITIALISEATION + CONFIG       ###########
     wandb_config = {
         "name": run_name,
         "dataset_name": dataset_name,
@@ -156,11 +152,8 @@ def main(train, test):
         "max_epoch": max_epoch,
     }
     wandb_logger = wandb_initialization(job_type, repo_root, project, dataset_name, run_name,train_list, val_list, test_list, wandb_config, WandB_online)
-
     config = wandb.config
-
     logger.info(f"---Current config: {wandb.config}")
-
     if user_loss == "focal":
         logger.info(f"---focal_alpha: {wandb.config.get('focal_alpha', 'Not Found')}")
         logger.info(f"---focal_gamma: {wandb.config.get('focal_gamma', 'Not Found')}")
@@ -179,26 +172,6 @@ def main(train, test):
     #........................................................
 
     #########    CREATE DATA LOADERS    #########
-
-    # if job_type == "train":
-    #     train_list = train_list
-    # elif job_type == "val":
-    #     val_list = val_list
-    # elif job_type == "test":
-    #     test_list = test_list
-    
-
-    # dl = create_subset(file_list, dataset_path, job_type, subset_fraction, inputs, bs, num_workers, persistent_workers)
-    # ckpt_to_test = next(test_ckpt_path.rglob("*.ckpt"), None)
-    # if ckpt_to_test is None:
-    #     raise FileNotFoundError(f"No checkpoint found in {test_ckpt_path}")
-
-
-    # if job_type == "train":
-    #     logger.info(" Creating data loaders")
-    #     train_dl = create_subset(train_list, dataset_path, 'train', subset_fraction, inputs, bs, num_workers, persistent_workers)
-    #     val_dl = create_subset(val_list, dataset_path, 'val', subset_fraction, inputs, bs, num_workers, persistent_workers)
-
 
     if job_type == "train":
         logger.info(" Creating data loaders")

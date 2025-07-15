@@ -142,6 +142,7 @@ def main(train, test, inference, config):
     # INFERENCE
     threshold =  0.5 # OVERRIDDDEN IN CONFIG
     tile_size = 256 # OVERRIDDDEN IN CONFIG
+    norm_func = 'logclipmm_g'
 
     predict_input = Path("/Users/alexwebb/laptop_coding/floodai/InferSAR/data/4final/predict_input")
     minmax_path = Path("/Users/alexwebb/laptop_coding/floodai/InferSAR/configs/global_minmax_INPUT/global_minmax.json")
