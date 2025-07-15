@@ -217,47 +217,53 @@ class FloodDataset(Dataset):
         # return model_input.float(), val_mask.float()
 
 
-class Sen1Dataset_OLD(Dataset):
+class Sen1Dataset(Dataset):
     def __init__(self, job_type: str, input_folder: Path, csv_path: Path,image_code: str,  input_is_linear: bool, db_min: float = -30.0, db_max: float = 0.0, ):
         """
         csv_path: Path to one of the split CSVs (train.csv / val.csv / test.csv/ pred.csv)
         """
+        self.job_type = job_type
         self.input_folder = input_folder
         self.image_code= image_code
         self.db_min = db_min
         self.db_max = db_max
         self.input_is_linear = input_is_linear
-        self.job_type = job_type
         valid_thresh = 0.8  # Minimum fraction of valid pixels to keep a tile
+
         self.img_paths  = []
         self.mask_paths = []
         orig_imgs = []
         orig_masks = []
-        logger.info(f"---Dataset job_type: {self.job_type}")
+        
         with open(csv_path, newline='') as f:
             reader = csv.reader(f)
             # assume the columns are named exactly "image" and "mask"
             #  MAKE LISTS OF 
             for row in reader:
-                img_rel, mask_rel = row[0], row[1]
+                img_rel = row[0]
                 orig_imgs.append(self.input_folder / f'{image_code}_tiles' / img_rel)
-                orig_masks.append(self.input_folder / f'{image_code}_tiles' / mask_rel)
             
-        if len(orig_imgs) != len(orig_masks):
+            if job_type in  ('train', 'val'):
+                mask_rel = row[1]
+                orig_masks.append(self.input_folder / f'{image_code}_tiles' / mask_rel)
+                for img_pth, mask_pth in zip(orig_imgs, orig_masks):
+                    with rasterio.open(img_pth) as src:
+                        valid = src.dataset_mask().astype(bool)
+                        # dataset_mask()==1 where data is valid, 0 where nodata or outside the swath
+                        # if np.sum(valid) >= valid_thresh:
+                        #     self.img_paths.append(img_pth)
+                        #     self.mask_paths.append(mask_pth)
+                        
+
+                        assert len(self.img_paths) == len(self.mask_paths) 
+        if len(self.img_paths) != len(self.mask_paths):
             raise ValueError(
                 f"Split file {csv_path} has {len(orig_imgs)} images "
                 f"but {len(orig_masks)} masks."
             )
-        if job_type != 'inference':
-            for img_pth, mask_pth in zip(orig_imgs, orig_masks):
-                with rasterio.open(img_pth) as src:
-                    valid = src.dataset_mask().astype(bool)
-                    # dataset_mask()==1 where data is valid, 0 where nodata or outside the swath
-                    if np.sum(valid) >= valid_thresh:
-                        self.img_paths.append(img_pth)
-                        self.mask_paths.append(mask_pth)
+        if len(orig_imgs) != len(orig_masks):
+            logger.info(f"some images have no valid pixels, skipping them")
 
-                    assert len(self.img_paths) == len(self.mask_paths)
 
     def __len__(self):
         return len(self.img_paths)
@@ -297,66 +303,92 @@ class Sen1Dataset_OLD(Dataset):
             arr -= self.db_min
             arr /= (self.db_max - self.db_min)
 
-        img = np.stack([vv, vh], axis=0)  # shape [2,H,W]
+        img_tensor = np.stack([vv, vh], axis=0)  # shape [2,H,W]
 
-        if self.job_type != 'inference':
-            # 2) Load & binarize mask
+        if self.job_type in('train', 'val'):
             msk_pth = self.input_folder/ f'{self.image_code}_masks' / self.mask_paths[idx]
             with rasterio.open(msk_pth) as src:
                 raw = src.read(1).astype(np.int64)
                 valid_mask = torch.from_numpy(raw != -1).unsqueeze(0)  # valid pixels are 1, invalid are 0
                 mask = np.where(raw ==  -1, 255, raw)
                 mask = torch.from_numpy(mask.astype(np.float32)).unsqueeze(0)  # Add a channel dimension
-        return (img, mask, valid_mask, img_pth.name)
+            return (img_tensor, mask, valid_mask, img_pth.name)
+
+        valid_mask = torch.from_numpy((raw != -1).astype(np.float32))
+        return (img_tensor, valid_mask.unsqueeze(0), img_pth.name) 
+        
+import csv
+from pathlib import Path
+from typing import Tuple, Union, List
+
+import numpy as np
+import rasterio
+import torch
+from torch.utils.data import Dataset
 
 
 class Sen1Dataset(Dataset):
     """
-    A Dataset for Sentinel-1 flood segmentation that supports three modes:
-      - "train" / "val":  expects CSV rows [image_rel, mask_rel]
-      - "infer":          expects CSV rows [image_rel, ...], mask_rel is ignored
-    
+    A single Dataset for train/val/infer, driven by a CSV.
+
+    CSV format:
+      train/val -> rows of [image_filename, mask_filename]
+      infer     -> rows of [image_filename, <ignored>]
+
     __getitem__ returns:
-      train/val -> (img_tensor [2,H,W], mask_tensor [1,H,W], valid_mask [1,H,W], filename)
-      infer     -> (img_tensor [2,H,W], valid_mask [1,H,W], filename)
+      train/val: (img [2,H,W], mask [1,H,W], valid [1,H,W], fname)
+      infer:     (img [2,H,W], valid [1,H,W], fname)
     """
     def __init__(
         self,
-        mode: str,
-        csv_path: Path,
-        root_dir: Path,
+        job_type:       str,        # "train","val" or "infer"
+        input_folder:   Path,       # root of your S1Hand/… folders
+        csv_path:       Path,
+        image_code:     str,        # e.g. "myevent"
         input_is_linear: bool,
-        db_min: float = -30.0,
-        db_max: float =   0.0,
+        db_min:         float = -30.0,
+        db_max:         float =   0.0,
     ):
-        assert mode in ("train","val","infer"), "mode must be 'train','val', or 'infer'"
-        self.mode            = mode
-        self.root            = root_dir
+        assert job_type in ("train","val","infer")
+        self.job_type        = job_type
+        self.input_folder    = input_folder
+        self.image_code      = image_code
         self.input_is_linear = input_is_linear
         self.db_min          = db_min
         self.db_max          = db_max
 
-        self.img_paths: List[Path]   = []
-        self.mask_paths: List[Path]  = []
-        self.filenames:  List[str]   = []
+        # will hold full Paths to files
+        self.img_paths:  List[Path] = []
+        self.mask_paths: List[Path] = []
+        self.fnames:     List[str]  = []
 
-        # Read the CSV once at init
-        with open(csv_path, newline="") as f:
+        tile_dir = input_folder / f"{image_code}_tiles"
+        mask_dir = input_folder / f"{image_code}_masks"
+
+        # 1) parse the CSV
+        with csv_path.open() as f:
             reader = csv.reader(f)
             for row in reader:
-                img_rel = row[0]
-                self.img_paths.append(self.root/"S1Hand"/img_rel)
-                self.filenames.append(Path(img_rel).name)
-                if mode in ("train","val"):
-                    mask_rel = row[1]
-                    self.mask_paths.append(self.root/"LabelHand"/mask_rel)
+                img_name = row[0]
+                self.img_paths.append(tile_dir / img_name)
+                self.fnames.append(img_name)
 
-        if mode in ("train","val"):
-            assert len(self.img_paths)==len(self.mask_paths), \
-                f"CSV rows must have both image and mask for mode {mode}"
+                # only for train/val do we need the second column
+                if job_type in ("train","val"):
+                    mask_name = row[1]
+                    self.mask_paths.append(mask_dir / mask_name)
+
+        # sanity check
+        if job_type in ("train","val"):
+            assert len(self.img_paths) == len(self.mask_paths), (
+                f"csv has {len(self.img_paths)} images but "
+                f"{len(self.mask_paths)} masks"
+            )
+
 
     def __len__(self) -> int:
         return len(self.img_paths)
+
 
     def __getitem__(
         self, idx: int
@@ -364,24 +396,23 @@ class Sen1Dataset(Dataset):
         Tuple[torch.Tensor, torch.Tensor, torch.Tensor, str],
         Tuple[torch.Tensor, torch.Tensor, str]
     ]:
-        # 1) load VV & VH + valid mask
-        img_pth = self.img_paths[idx]
-        with rasterio.open(img_pth) as src:
-            vv    = src.read(1).astype(np.float32)
-            vh    = src.read(2).astype(np.float32)
-            valid = src.dataset_mask().astype(bool)
+        # --- load VV & VH + valid mask from the tile file ---
+        img_path = self.img_paths[idx]
+        with rasterio.open(img_path) as src:
+            vv_arr  = src.read(1).astype(np.float32)
+            vh_arr  = src.read(2).astype(np.float32)
+            valid_np = src.dataset_mask().astype(bool)
 
-        # blank out invalid pixels
-        vv[~valid] = np.nan
-        vh[~valid] = np.nan
+        # blank invalid pixels
+        vv_arr[~valid_np] = np.nan
+        vh_arr[~valid_np] = np.nan
 
-        # 2) log-transform if needed, clip, then min–max normalize to [0,1]
-        for arr in (vv, vh):
+        # --- log→clip→minmax→[0,1] normalize each band ---
+        for arr in (vv_arr, vh_arr):
             if self.input_is_linear:
                 np.clip(arr, 1e-6, None, out=arr)
                 np.log10(arr, out=arr)
                 arr *= 10.0
-            # replace NaN/inf with training bounds
             np.nan_to_num(
                 arr,
                 copy=False,
@@ -389,37 +420,41 @@ class Sen1Dataset(Dataset):
                 posinf=self.db_max,
                 neginf=self.db_min,
             )
-            # clamp and scale
             np.clip(arr, self.db_min, self.db_max, out=arr)
             arr -= self.db_min
             arr /= (self.db_max - self.db_min)
 
-        img_tensor = torch.from_numpy(np.stack([vv, vh], axis=0))
+        # stack & convert to tensor
+        img_tensor = torch.from_numpy(np.stack([vv_arr, vh_arr], axis=0))
 
-        # 3a) TRAIN / VAL: load & binarize mask
-        if self.mode in ("train","val"):
-            mask_pth = self.mask_paths[idx]
-            with rasterio.open(mask_pth) as src:
+        # --- now branch by job_type ---
+        if self.job_type in ("train","val"):
+            # load the mask, build mask & valid_mask from raw values
+            mask_path = self.mask_paths[idx]
+            with rasterio.open(mask_path) as src:
                 raw = src.read(1).astype(np.int64)
-            # valid pixels = raw != -1
+
+            # valid_mask = 1 for pixels ≠ –1
             valid_mask = torch.from_numpy((raw != -1).astype(np.float32))
-            # flood mask = 1 where raw==1
+            # flood mask = 1 for pixels == 1
             mask       = torch.from_numpy((raw == 1).astype(np.float32))
+
             # add channel dims
             return (
-                img_tensor, 
-                mask.unsqueeze(0), 
-                valid_mask.unsqueeze(0), 
-                self.filenames[idx]
+                img_tensor,
+                mask.unsqueeze(0),
+                valid_mask.unsqueeze(0),
+                self.fnames[idx]
             )
 
-        # 3b) INFERENCE: no mask
-        valid_mask = torch.from_numpy(valid.astype(np.float32))
+        # inference mode: no mask file, just return valid mask
+        valid_mask = torch.from_numpy(valid_np.astype(np.float32))
         return (
-            img_tensor, 
-            valid_mask.unsqueeze(0), 
-            self.filenames[idx]
+            img_tensor,
+            valid_mask.unsqueeze(0),
+            self.fnames[idx]
         )
+
 
 class Segmentation_training_loop(pl.LightningModule):
 
