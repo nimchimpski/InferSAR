@@ -239,6 +239,7 @@ class Sen1Dataset(Dataset):
             reader = csv.reader(f)
             # assume the columns are named exactly "image" and "mask"
             #  MAKE LISTS OF 
+            next(reader, None)  # skip header row
             for row in reader:
                 img_rel = row[0]
                 orig_imgs.append(self.input_folder / f'{image_code}_tiles' / img_rel)
@@ -349,7 +350,7 @@ class Sen1Dataset(Dataset):
         db_min:         float = -30.0,
         db_max:         float =   0.0,
     ):
-        assert job_type in ("train","val","infer")
+        assert job_type in ("train","val","inference")
         self.job_type        = job_type
         self.input_folder    = input_folder
         self.image_code      = image_code
@@ -368,6 +369,7 @@ class Sen1Dataset(Dataset):
         # 1) parse the CSV
         with csv_path.open() as f:
             reader = csv.reader(f)
+            next(reader, None)  # skip header row
             for row in reader:
                 img_name = row[0]
                 self.img_paths.append(tile_dir / img_name)
@@ -398,6 +400,8 @@ class Sen1Dataset(Dataset):
     ]:
         # --- load VV & VH + valid mask from the tile file ---
         img_path = self.img_paths[idx]
+        logger.info(f"---Loading image from {img_path}")
+
         with rasterio.open(img_path) as src:
             vv_arr  = src.read(1).astype(np.float32)
             vh_arr  = src.read(2).astype(np.float32)

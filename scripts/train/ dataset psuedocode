@@ -1,0 +1,48 @@
+function GET_ITEM(index):
+    # 1) pick the tile file and filename
+    img_path ← self.img_paths[index]
+    fname    ← img_path.name       # e.g. "tile_001.tif"
+
+    # 2) read VV, VH and valid‐pixel mask from the GeoTIFF
+    (vv_arr, vh_arr, valid_mask_np) ← READ_SAR_TILES(img_path)
+      • vv_arr  = band1 as float32 array
+      • vh_arr  = band2 as float32 array
+      • valid_mask_np = dataset_mask() as boolean array
+
+    # 3) blank out invalid pixels
+    vv_arr[not valid_mask_np] ← NaN
+    vh_arr[not valid_mask_np] ← NaN
+
+    # 4) preprocess each polarization
+    for arr in [vv_arr, vh_arr]:
+        if self.input_is_linear:
+            arr ← log10( clip(arr, min=1e-6) ) * 10
+        arr ← nan_to_num(arr, nan=self.db_min,
+                              posinf=self.db_max,
+                              neginf=self.db_min)
+        arr ← clip(arr, self.db_min, self.db_max)
+        arr ← (arr − self.db_min) / (self.db_max − self.db_min)
+
+    img_tensor ← STACK_TO_TENSOR([vv_arr, vh_arr])  # shape [2,H,W]
+
+    # 5) mode‐specific outputs
+    if self.job_type in ["train", "val"]:
+        # load and binarize mask
+        mask_path ← self.mask_paths[index]
+        raw_mask ← READ_BAND1_AS_INT(mask_path)   # values in {–1,0,1}
+        valid_mask   ← (raw_mask != –1)           # boolean array
+        flood_mask   ← (raw_mask == 1)            # boolean array
+
+        mask_tensor      ← TO_FLOAT_TENSOR(flood_mask).unsqueeze(0)  # [1,H,W]
+        valid_mask_tensor← TO_FLOAT_TENSOR(valid_mask).unsqueeze(0) # [1,H,W]
+
+        return (img_tensor,
+                mask_tensor,
+                valid_mask_tensor,
+                fname)
+
+    else:  # inference mode
+        valid_mask_tensor ← TO_FLOAT_TENSOR(valid_mask_np).unsqueeze(0)  # [1,H,W]
+        return (img_tensor,
+                valid_mask_tensor,
+                fname)

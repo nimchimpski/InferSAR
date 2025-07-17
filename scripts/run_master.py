@@ -263,6 +263,7 @@ def main(train, test, inference, config):
 
     if MAKE_TIFS:
         pass
+        # TODO MAKE SURE EXTENSION = TIF NOT TOFF
         # if extracted.exists():
             # logger.info(f"--- Deleting existing extracted folder: {extracted}")
             # delete the folder and create a new one
@@ -351,48 +352,18 @@ def main(train, test, inference, config):
         db_min=db_min,
         db_max=db_max)
     
-    subset_indices = random.sample(range(len(dataset))), int(subset_fraction * len(dataset))
+    subset_indices = random.sample(range(len(dataset)), int(subset_fraction * len(dataset)))
     subset = Subset(dataset, subset_indices)
         # MAKE DATALOADER FROM DATASET
 
     dataloader = DataLoader( subset,
         batch_size = batch_size,  # Batch size of 1 for inference 
-        shuffle = shuffle,  # No need to shuffle for inference
-        num_workers = 4,  # Adjust based on your system
-        persistent_workers = True,  # Keep workers alive for faster loading   
+        num_workers = 4,
+        persistent_workers = True,  # Keep workers alive for faster loading  
+  # Adjust based on your system
+        shuffle = job_type in ("train", "val", "test") ,
+        
         )
-
-    # DEFINE THE PREDICTION TILES FOLDER
-    predictions_folder = save_tiles_path.parent / f'{save_tiles_path.stem}_predictions'
-    # DELETE THE PREDICTION FOLDER IF IT EXISTS
-    if predictions_folder.exists():
-        logger.info(f"--- Deleting existing predictions folder: {predictions_folder}")
-        shutil.rmtree(predictions_folder)
-    predictions_folder.mkdir(exist_ok=True)
-
-    #  # MAKE PREDICTION TILES
-    with torch.no_grad():
-        for imgs, _, valids, fnames in tqdm(dataloader, desc="Predict"):
-            imgs   = imgs.to(device)            # [B,2,H,W]
-            logits = model(imgs)
-            probs  = torch.sigmoid(logits).cpu()  # back to CPU for numpy/rasterio
-            preds  = (probs > threshold).float()  # [B,1,H,W]
-
-            for b, name in enumerate(fnames):
-                out = preds[b, 0].numpy()                 # 2-D
-                out[~valids[b, 0].numpy().astype(bool)] = 0  # mask invalid px
-    
-                src_path = save_tiles_path / name
-                with rasterio.open(src_path) as src:
-                    profile = src.profile
-                profile.update(dtype="float32", count=1)
-    
-                dst_path = predictions_folder / name
-                with rasterio.open(dst_path, "w", **profile) as dst:
-                    dst.write(out.astype("float32"), 1)   
-    # STITCH PREDICTION TILES
-    input_image = next(predict_input.rglob("*.tif"), None) if name in ['vv', 'vh'] else None
-    stitch_tiles(metadata, predictions_folder, input_folder, input_image)  
 
     if train or test:
         ########.     CHOOE LOSS FUNCTION     #########
@@ -468,6 +439,46 @@ def main(train, test, inference, config):
             )
             trainer.test(model=training_loop, dataloaders=test_dl)
 
+
+    elif inference:
+
+        # DEFINE THE PREDICTION TILES FOLDER
+        predictions_folder = save_tiles_path.parent / f'{save_tiles_path.stem}_predictions'
+        # DELETE THE PREDICTION FOLDER IF IT EXISTS
+        if predictions_folder.exists():
+            logger.info(f"--- Deleting existing predictions folder: {predictions_folder}")
+            shutil.rmtree(predictions_folder)
+        predictions_folder.mkdir(exist_ok=True)
+
+        #  # MAKE PREDICTION TILES
+        with torch.no_grad():
+            for imgs, valids, fnames in tqdm(dataloader, desc="Predict"):
+                imgs   = imgs.to(device)            # [B,2,H,W]
+                logits = model(imgs)
+                probs  = torch.sigmoid(logits).cpu()  # back to CPU for numpy/rasterio
+                preds  = (probs > threshold).float()  # [B,1,H,W]
+
+                for b, name in enumerate(fnames):
+                    out = preds[b, 0].numpy()                 # 2-D
+                    out[~valids[b, 0].numpy().astype(bool)] = 0  # mask invalid px
+
+                    src_path = save_tiles_path / name
+                    with rasterio.open(src_path) as src:
+                        profile = src.profile
+                    profile.update(dtype="float32", count=1)
+
+                    dst_path = predictions_folder / name
+                    with rasterio.open(dst_path, "w", **profile) as dst:
+                        dst.write(out.astype("float32"), 1)   
+        # STITCH PREDICTION TILES
+        input_image = next(extracted.rglob("*.tif"), None) 
+        if 'vv' in input_image.name.lower() or 'vh' in input_image.name.lower():
+            logger.info(f"---input_image: {input_image}")
+            logger.info(f"---predictions_folder: {predictions_folder}")
+            logger.info(f'---input_folder: {input_folder}')
+            stitch_tiles(metadata, predictions_folder, stitched_image, input_image)  
+
+    
     # Cleanup
     run_time = (time.time() - start) / 60
     logger.info(f" Total runtime: {run_time:.2f} minutes")
