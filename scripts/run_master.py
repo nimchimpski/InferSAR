@@ -128,7 +128,7 @@ def main(train, test, inference, config):
     early_stop = True
     patience=3
     num_workers = 8
-    WandB_online = True
+    WandB_online = False
     LOGSTEPS = 50
     PRETRAINED = True
     # inputs = ['vv', 'vh', 'mask']
@@ -140,7 +140,7 @@ def main(train, test, inference, config):
     bce_weight = 0.35 # FOR BCE_DICE
     # INFERENCE
     threshold =  0.5 # OVERRIDDDEN IN CONFIG
-    tile_size = 256 # OVERRIDDDEN IN CONFIG
+    tile_size = 1024 # OVERRIDDDEN IN CONFIG
     norm_func = 'logclipmm_g'
 
 
@@ -155,6 +155,7 @@ def main(train, test, inference, config):
     stride = tile_size
     #.......................................................
     if inference:
+        threshold = 0.8
         predict_input = Path("/Users/alexwebb/laptop_coding/floodai/InferSAR/data/4final/predict_input")
         input_folder = predict_input
         file_list = predict_input / "predict_tile_list.csv"
@@ -210,7 +211,6 @@ def main(train, test, inference, config):
     }
     wandb_logger = wandb_initialization(job_type, repo_root, project, dataset_name, run_name,train_list, val_list, test_list, wandb_config, WandB_online)
     config = wandb.config
-    logger.info(f"---Current config: {wandb.config}")
     if user_loss == "focal":
         logger.info(f"---focal_alpha: {wandb.config.get('focal_alpha', 'Not Found')}")
         logger.info(f"---focal_gamma: {wandb.config.get('focal_gamma', 'Not Found')}")
@@ -223,7 +223,8 @@ def main(train, test, inference, config):
     run_name = f"{dataset_name}_{timestamp}_BS{config.batch_size}_s{config.subset_fraction}_{loss_desc}"  
     wandb.run.name = run_name
     # wandb.run.save()
-    logger.info(f"---config.name: {config.name}")
+
+
     if is_sweep_run():
         logger.info(" IN SWEEP MODE <<<")
     #........................................................
@@ -235,7 +236,9 @@ def main(train, test, inference, config):
 
 
     #########    TRAIN / TEST - CREATE DATA LOADERS    #########
-
+    if not inference:
+        logger.info(f"---config.name: {config.name}")
+        logger.info(f"---Current config: {wandb.config}")
     if  train:
         input_folder = dataset_path / 'train_input'
         file_list = train_list
@@ -472,7 +475,7 @@ def main(train, test, inference, config):
                         dst.write(out.astype("float32"), 1)   
         # STITCH PREDICTION TILES
         input_image = next(extracted.rglob("*.tif"), None) 
-        if 'vv' in input_image.name.lower() or 'vh' in input_image.name.lower():
+        if ('vv' in input_image.name.lower() or 'vh' in input_image.name.lower()) and input_image.suffix.lower() == '.tif':
             logger.info(f"---input_image: {input_image}")
             logger.info(f"---predictions_folder: {predictions_folder}")
             logger.info(f'---input_folder: {input_folder}')

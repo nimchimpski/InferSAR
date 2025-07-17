@@ -629,19 +629,20 @@ def make_das_from_layerdict( layerdict, folder):
     dataarrays = []
     layer_names = []
     for tif_file, band_name in layerdict.items():
-        logger.info(f'---tif_file= {tif_file}')
-        logger.info(f'---band_name= {band_name}')
-        filepath = folder / tif_file
-        # logger.info(f'---**************filepath = {filepath.name}')
-        tiffda = rxr.open_rasterio(filepath)
-        nan_check(tiffda)
-        # logger.info(f'---{band_name}= {tiffda}')   
-        # check num uniqq values
-        # logger.info(f"---Unique data: {np.unique(tiffda.data)}")
-        # logger.info("----unique values:", np.unique(tiffda.values))
-        dataarrays.append(tiffda)
-        layer_names.append(band_name)
-# 
+        if not 'aux.xml' in tif_file:
+            logger.info(f'---tif_file= {tif_file}')
+            logger.info(f'---band_name= {band_name}')
+            filepath = folder / tif_file
+            # logger.info(f'---**************filepath = {filepath.name}')
+            tiffda = rxr.open_rasterio(filepath)
+            nan_check(tiffda)
+            # logger.info(f'---{band_name}= {tiffda}')   
+            # check num uniqq values
+            # logger.info(f"---Unique data: {np.unique(tiffda.data)}")
+            # logger.info("----unique values:", np.unique(tiffda.values))
+            dataarrays.append(tiffda)
+            layer_names.append(band_name)
+#   
     return dataarrays, layer_names
 # def set_tif_dtype_to_float32(tif_file):
     

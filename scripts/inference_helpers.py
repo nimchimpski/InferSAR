@@ -187,7 +187,7 @@ def stitch_tiles(metadata: list, prediction_tiles, save_path, image):
         height=height,
         width=width,
         count=1,
-        dtype=stitched_image.dtype,
+        dtype='uint8',
         crs=crs,
         transform=transform,
     ) as dst:
