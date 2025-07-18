@@ -343,7 +343,9 @@ class Sen1Dataset(Dataset):
     def __init__(
         self,
         job_type:       str,        # "train","val" or "infer"
-        input_folder:   Path,       # root of your S1Hand/… folders
+        working_dir:   Path,       # root of your S1Hand/… folders
+        images_dir:   str,        # e.g. "S1Hand" or "S1Hand_tiles"
+        labels_dir:   str,        # e.g. "LabelHand" or "LabelHand_tiles"
         csv_path:       Path,
         image_code:     str,        # e.g. "myevent"
         input_is_linear: bool,
@@ -352,7 +354,7 @@ class Sen1Dataset(Dataset):
     ):
         assert job_type in ("train","val","inference")
         self.job_type        = job_type
-        self.input_folder    = input_folder
+        self.working_dir    = working_dir
         self.image_code      = image_code
         self.input_is_linear = input_is_linear
         self.db_min          = db_min
@@ -362,9 +364,12 @@ class Sen1Dataset(Dataset):
         self.img_paths:  List[Path] = []
         self.mask_paths: List[Path] = []
         self.fnames:     List[str]  = []
-
-        tile_dir = input_folder / f"{image_code}_tiles"
-        mask_dir = input_folder / f"{image_code}_masks"
+        if job_type == "inference":
+            tile_dir = working_dir / f"{image_code}_tiles"
+            mask_dir = working_dir / f"{image_code}_masks"
+        else:
+            tile_dir = images_dir
+            mask_dir = labels_dir
 
         # 1) parse the CSV
         with csv_path.open() as f:
@@ -386,7 +391,6 @@ class Sen1Dataset(Dataset):
                 f"csv has {len(self.img_paths)} images but "
                 f"{len(self.mask_paths)} masks"
             )
-
 
     def __len__(self) -> int:
         return len(self.img_paths)

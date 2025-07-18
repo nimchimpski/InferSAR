@@ -67,7 +67,6 @@ logging.getLogger('scripts.process.process_helpers').setLevel(logging.INFO)
 
 os.environ['KMP_DUPLICATE_LIB_OK'] = "True"
 
-
 # Register signal handler for SIGINT (Ctrl+C)
 signal.signal(signal.SIGINT, handle_interrupt)
 
@@ -77,11 +76,15 @@ signal.signal(signal.SIGINT, handle_interrupt)
 @click.option('--inference', is_flag=True, help="Run inference on a copernicus S1 image")
 @click.option('--config', is_flag=True, help='loading from config')
 
-
 def main(train, test, inference, config):
 
-    if test and train:
-        raise ValueError("You can only specify one of --train or --test.")
+    n = 0
+    for i in train, test, inference:
+        if i:
+            n += 1
+    if n > 1:
+        raise ValueError("You can only specify one of --train, --test or --inference.")
+
     if  test:
         logger.info(' ARE YOU TESTING THE CORRECT CKPT? <<<')
     if train:
@@ -100,26 +103,22 @@ def main(train, test, inference, config):
 
     torch.set_float32_matmul_precision('medium')
     pl.seed_everything(42, workers=True)
-
     #......................................................
     # USER DEFINITIONS
-    repo_root = Path(__file__).resolve().parents[1]
-    logger.info(f"repo root: {repo_root}")
-    env_file = repo_root / ".env"
-
-    dataset_path = repo_root / "data" / "4final" / "train_input" 
-    if test:
-        dataset_path = repo_root / "data" / "4final" / "test_input"
-    ckpt_folder = repo_root / "checkpoints" / "ckpt_input"
-    stitched_image = repo_root / "results"
-
+    root_dir = Path('/Users/alexwebb/laptop_coding/floodai/INFERSAR/data/4final')
+    logger.info(f"repo root: {root_dir}")
+    env_file = root_dir / ".env"
+    dataset_pth = root_dir / "dataset" 
+    working_dir = root_dir / "training"
+    ckpt_folder = root_dir / "checkpoints" / "ckpt_input"
     project = "mac_py_package"
     dataset_name = "sen1floods11"  # "sen1floods11" or "copernicus_floods"
-    image_code = "code"  # Placeholder for image code, can be set in config
-
-    train_list = dataset_path / "flood_train_data.csv"
-    val_list = dataset_path / "flood_valid_data.csv"
-    test_list = dataset_path / "flood_test_data.csv"
+    image_code = "0000"  # Placeholder for image code, can be set in config
+    images_dir = dataset_pth/ 'S1HAnd'
+    labels_dir = dataset_pth/ 'LabelHand'
+    train_list = dataset_pth / "flood_train_data.csv"
+    val_list = dataset_pth / "flood_valid_data.csv"
+    test_list = dataset_pth / "flood_test_data.csv"
     run_name = "_"
     input_is_linear = False   # True for copernicus direct downloads, False for Sen1floods11
     subset_fraction = 1
@@ -138,9 +137,7 @@ def main(train, test, inference, config):
     focal_alpha = 0.8
     focal_gamma = 8
     bce_weight = 0.35 # FOR BCE_DICE
-
     minmax_path = Path("/Users/alexwebb/laptop_coding/floodai/InferSAR/configs/global_minmax_INPUT/global_minmax.json")
-    
     output_filename = '_name' # OVERRIDDDEN IN CONFIG
     db_min = -30.0
     db_max = 0.0
@@ -154,9 +151,9 @@ def main(train, test, inference, config):
         input_is_linear = True  # For inference, we assume input is linear
         # INFERENCE
         threshold = 0.3
-        predict_input = Path("/Users/alexwebb/laptop_coding/floodai/InferSAR/data/4final/predict_input")
-        input_folder = predict_input
-        file_list = predict_input / "predict_tile_list.csv"
+        predict_input = working_dir / "predict_input"
+        working_dir = root_dir / 'predictions'
+        file_list = working_dir / "predict_tile_list.csv"
         MAKE_TIFS = 0
         MAKE_DATAARRAY = 1
         MAKE_TILES = 1
@@ -166,13 +163,15 @@ def main(train, test, inference, config):
         batch_size = 1
         shuffle = False
         # TODO GET ABOVE VALUES FROM SOMEWHERE EG FILENAME
-        stitched_image = input_folder / f'{sensor}_{image_code}_{date}_{tile_size}_{threshold}{output_filename}_WATER_AI.tif'
+        stitched_image = working_dir / f'{sensor}_{image_code}_{date}_{tile_size}_{threshold}{output_filename}_WATER_AI.tif'
         if stitched_image.exists():
             logger.info(f"---overwriting existing file! : {stitched_image}")
         logger.info(f'config mode = {config}')
 
     if config:
         config_path = Path('/Users/alexwebb/laptop_coding/floodai/InferSAR/configs/floodaiv2_config.yaml')
+        logger.info(f"---config.name: {config.name}")
+        logger.info(f"---Current config: {wandb.config}")
         with open(config_path, "r") as file:
             config = yaml.safe_load(file)
         threshold = config["threshold"] 
@@ -206,7 +205,7 @@ def main(train, test, inference, config):
         "bce_weight": bce_weight,
         "max_epoch": max_epoch,
     }
-    wandb_logger = wandb_initialization(job_type, repo_root, project, dataset_name, run_name,train_list, val_list, test_list, wandb_config, WandB_online)
+    wandb_logger = wandb_initialization(job_type, root_dir, project, dataset_name, run_name,train_list, val_list, test_list, wandb_config, WandB_online)
     config = wandb.config
     if user_loss == "focal":
         logger.info(f"---focal_alpha: {wandb.config.get('focal_alpha', 'Not Found')}")
@@ -221,34 +220,29 @@ def main(train, test, inference, config):
     wandb.run.name = run_name
     # wandb.run.save()
 
-
     if is_sweep_run():
         logger.info(" IN SWEEP MODE <<<")
     #........................................................
-
     ckpt = next(ckpt_folder.rglob("*.ckpt"), None)
     if ckpt is None:
         raise FileNotFoundError(f"No checkpoint found in {ckpt_folder}")
-
-
-
+    
+# ##################################################################
     #########    TRAIN / TEST - CREATE DATA LOADERS    #########
-    if not inference:
-        logger.info(f"---config.name: {config.name}")
-        logger.info(f"---Current config: {wandb.config}")
     if  train:
-        input_folder = dataset_path / 'train_input'
         file_list = train_list
-
     if test:
-        input_folder = dataset_path / 'test_input'
         file_list = test_list
-
-    save_tiles_path = input_folder /  f'{image_code}_tiles'
+    if train or test:
+        save_tiles_path = dataset
+        training_tiles = save_tiles_path
+    if inference:
+        save_tiles_path = working_dir /  f'{image_code}_tiles'
+        tiles_dir = save_tiles_path
     metadata_path = save_tiles_path / 'tile_metadata_pth.json'
 
     # CREATE THE EXTRACTED FOLDER
-    extracted = predict_input / f'{image_code}_extracted'
+    extracted = working_dir / f'{image_code}_extracted'
     if save_tiles_path.exists():
         # logger.info(f" Deleting existing tiles folder: {save_tiles_path}")
         # delete the folder and create a new one
@@ -298,10 +292,8 @@ def main(train, test, inference, config):
         # fnal_extent = extracted / f'{image_code}_32_final_extent.tif'
         # make_float32_inf(reproj_extent, final_extent
 
-
     if MAKE_DATAARRAY:
         create_event_datacube_copernicus(predict_input, image_code)
-    
         cube = next(predict_input.rglob("*.nc"), None)
         if cube is None:
             logger.info(f"---No data cube found in {predict_input.name}")
@@ -331,17 +323,19 @@ def main(train, test, inference, config):
     # LOAD THE MODEL STATE DICT
     model.load_state_dict(cleaned_state_dict)
 
-    
     logger.info(" Creating data loaders")
-    logger.info(f"---input_folder: {input_folder}")
+    logger.info(f"---tileS_dir: {tiles_dir}")
     logger.info(f"---file_list: {file_list}")
     logger.info(f'---input_is_linear: {input_is_linear}')
 
+# ////////////////////////////////////////////////////////////
 
     # TRAIN + INFERENCE : CREATE THE  DATALOADER
     dataset = Sen1Dataset(
         job_type = job_type,
-        input_folder = input_folder,
+        tiles_dir = tiles_dir,
+        images_dir = images_dir,
+        labels_dir = labels_dir,
         csv_path = file_list,
         image_code=image_code,
         input_is_linear=input_is_linear,
@@ -357,9 +351,7 @@ def main(train, test, inference, config):
         num_workers = 4,
         persistent_workers = True,  # Keep workers alive for faster loading  
   # Adjust based on your system
-        shuffle = job_type in ("train", "val", "test") ,
-        
-        )
+        shuffle = job_type in ("train", "test") ,)
 
     if train or test:
         ########.     CHOOE LOSS FUNCTION     #########
@@ -370,7 +362,7 @@ def main(train, test, inference, config):
             mode="min",
     )
         ###########    SETUP TRAINING LOOP    #########
-        ckpt_dir = repo_root / "checkpoints" / "ckpt_training"
+        ckpt_dir = root_dir / "checkpoints" / "ckpt_training"
         ckpt_dir.mkdir(parents=True, exist_ok=True)
         checkpoint_callback = ModelCheckpoint(
             dirpath=ckpt_dir,
