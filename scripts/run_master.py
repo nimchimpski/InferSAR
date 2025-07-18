@@ -138,11 +138,6 @@ def main(train, test, inference, config):
     focal_alpha = 0.8
     focal_gamma = 8
     bce_weight = 0.35 # FOR BCE_DICE
-    # INFERENCE
-    threshold =  0.5 # OVERRIDDDEN IN CONFIG
-    tile_size = 1024 # OVERRIDDDEN IN CONFIG
-    norm_func = 'logclipmm_g'
-
 
     minmax_path = Path("/Users/alexwebb/laptop_coding/floodai/InferSAR/configs/global_minmax_INPUT/global_minmax.json")
     
@@ -152,10 +147,13 @@ def main(train, test, inference, config):
     MAKE_TIFS = 0
     MAKE_DATAARRAY= 0
     MAKE_TILES = 0
+    tile_size = 512
     stride = tile_size
-    #.......................................................
+#.......................................................
     if inference:
-        threshold = 0.8
+        input_is_linear = True  # For inference, we assume input is linear
+        # INFERENCE
+        threshold = 0.3
         predict_input = Path("/Users/alexwebb/laptop_coding/floodai/InferSAR/data/4final/predict_input")
         input_folder = predict_input
         file_list = predict_input / "predict_tile_list.csv"
@@ -167,7 +165,6 @@ def main(train, test, inference, config):
         subset_fraction = 1
         batch_size = 1
         shuffle = False
-        input_is_linear = True
         # TODO GET ABOVE VALUES FROM SOMEWHERE EG FILENAME
         stitched_image = input_folder / f'{sensor}_{image_code}_{date}_{tile_size}_{threshold}{output_filename}_WATER_AI.tif'
         if stitched_image.exists():
@@ -250,9 +247,6 @@ def main(train, test, inference, config):
     save_tiles_path = input_folder /  f'{image_code}_tiles'
     metadata_path = save_tiles_path / 'tile_metadata_pth.json'
 
-
-
-
     # CREATE THE EXTRACTED FOLDER
     extracted = predict_input / f'{image_code}_extracted'
     if save_tiles_path.exists():
@@ -260,7 +254,6 @@ def main(train, test, inference, config):
         # delete the folder and create a new one
         shutil.rmtree(save_tiles_path)
         save_tiles_path.mkdir(exist_ok=True, parents=True)
-
 
     logger.info(f' MAKE_TIFS = {MAKE_TIFS}, MAKE_DATAARRAY = {MAKE_DATAARRAY}, MAKE_TILES = {MAKE_TILES}   ')
 

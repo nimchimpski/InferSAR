@@ -430,6 +430,13 @@ class Sen1Dataset(Dataset):
 
         # stack & convert to tensor
         img_tensor = torch.from_numpy(np.stack([vv_arr, vh_arr], axis=0))
+        #  log all info about tensor
+        logger.info(f"GETITEM TENSOR INFO")  # Should be [2,H,W]
+        logger.info(f"Image path: {img_path}")
+        logger.info(f"Image tensor dtype: {img_tensor.dtype}")  # Should be
+        logger.info(f"Image tensor min: {img_tensor.min()}, max: {img_tensor.max()}")
+        logger.info(f"Image tensor shape: {img_tensor.shape}")  # Should be
+        assert img_tensor.shape[0] == 2, f"Expected 2 channels, got {img_tensor.shape[0]}"
 
         # --- now branch by job_type ---
         if self.job_type in ("train","val"):
