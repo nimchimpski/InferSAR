@@ -1,3 +1,16 @@
+"""
+Flood detection model training, testing, and inference script.
+
+This script uses a centralized ProjectPaths class to manage all directory and file paths,
+making the code more maintainable and easier to understand.
+
+Usage:
+    python run_master_copy.py --train    # Train the model
+    python run_master_copy.py --test     # Test the model  
+    python run_master_copy.py --inference # Run inference
+    python run_master_copy.py --config   # Use config file
+"""
+
 import sys
 import os
 import click
@@ -47,6 +60,10 @@ from wandb import Artifact
 from datetime import datetime
 # .............................................................
 
+# Add project directory to Python path for imports
+project_dir = Path(__file__).parent.parent.absolute()
+sys.path.insert(0, str(project_dir))
+
 from scripts.process.process_helpers import handle_interrupt, read_minmax_from_json
 from scripts.process.process_tiffs import create_event_datacube_copernicus, reproject_to_4326_gdal, make_float32_inf, resample_tiff_gdal
 from scripts.process.process_dataarrays import tile_datacube_rxr_inf
@@ -70,6 +87,103 @@ os.environ['KMP_DUPLICATE_LIB_OK'] = "True"
 # Register signal handler for SIGINT (Ctrl+C)
 signal.signal(signal.SIGINT, handle_interrupt)
 
+class ProjectPaths:
+    """Centralized path management for the flood detection project"""
+    
+    def __init__(self, project_dir: Path, image_code: str = "0000"):
+        self.project_dir = project_dir
+        self.image_code = image_code
+        
+        # Core data directory (equivalent to old 'root_dir')
+        self.data_dir = project_dir / 'data' / '4final'
+        
+        # Main working directories
+        self.dataset_dir = self.data_dir / "dataset"
+        self.working_dir = self.data_dir / "training"
+        self.predictions_dir = self.data_dir / 'predictions'
+        
+        # Data subdirectories
+        self.images_dir = self.dataset_dir / 'S1HAnd'
+        self.labels_dir = self.dataset_dir / 'LabelHand'
+        
+        # CSV files
+        self.train_csv = self.dataset_dir / "flood_train_data.csv"
+        self.val_csv = self.dataset_dir / "flood_valid_data.csv"
+        self.test_csv = self.dataset_dir / "flood_test_data.csv"
+        
+        # Checkpoint directories (consolidated)
+        self.ckpt_input_dir = project_dir / "checkpoints" / 'ckpt_INPUT'
+        self.ckpt_training_dir = self.data_dir / "checkpoints" / "ckpt_training"
+        
+        # Config files
+        self.main_config = project_dir / "configs" / "floodaiv2_config.yaml"
+        self.minmax_config = project_dir / "configs" / "global_minmax_INPUT" / "global_minmax.json"
+        
+        # Environment file
+        self.env_file = self.data_dir / ".env"
+    
+    def get_inference_paths(self, sensor: str = 'sensor', date: str = 'date', 
+                          tile_size: int = 512, threshold: float = 0.3, 
+                          output_filename: str = '_name'):
+        """Get inference-specific paths"""
+        tiles_dir = self.predictions_dir / f'{self.image_code}_tiles'
+        return {
+            'predict_input': self.working_dir / "predict_input",
+            'tiles_dir': tiles_dir,
+            'extracted_dir': self.working_dir / f'{self.image_code}_extracted',
+            'file_list': self.predictions_dir / "predict_tile_list.csv",
+            'stitched_image': self.predictions_dir / f'{sensor}_{self.image_code}_{date}_{tile_size}_{threshold}{output_filename}_WATER_AI.tif',
+            'metadata_path': tiles_dir / 'tile_metadata_pth.json'
+        }
+    
+    def get_training_paths(self):
+        """Get training/testing specific paths"""
+        return {
+            'tiles_dir': self.dataset_dir,
+            'metadata_path': self.dataset_dir / 'tile_metadata_pth.json'
+        }
+    
+    @property
+    def root_dir(self):
+        """Backward compatibility property for root_dir references"""
+        return self.data_dir
+    
+    def validate_paths(self, job_type: str):
+        """Validate that required paths exist for the given job type"""
+        errors = []
+        
+        if job_type in ('train', 'test'):
+            required_paths = [
+                (self.dataset_dir, "Dataset directory"),
+                (self.images_dir, "Images directory"),
+                (self.labels_dir, "Labels directory"),
+            ]
+            
+            if job_type == 'train':
+                required_paths.extend([
+                    (self.train_csv, "Training CSV"),
+                    (self.val_csv, "Validation CSV")
+                ])
+            elif job_type == 'test':
+                required_paths.append((self.test_csv, "Test CSV"))
+                
+        elif job_type == 'inference':
+            # Inference paths are created dynamically, less validation needed
+            pass
+            
+        # Always check checkpoint folder
+        required_paths.append((self.ckpt_input_dir, "Checkpoint input directory"))
+        
+        for path, description in required_paths:
+            if not path.exists():
+                errors.append(f"{description} not found: {path}")
+        
+        # Check for checkpoint files
+        if not any(self.ckpt_input_dir.rglob("*.ckpt")):
+            errors.append(f"No checkpoint files found in: {self.ckpt_input_dir}")
+            
+        return errors
+
 @click.command()
 @click.option('--train', is_flag=True,  help="Train the model")
 @click.option('--test', is_flag=True, help="Test the model")
@@ -82,8 +196,9 @@ def main(train, test, inference, config):
     for i in train, test, inference:
         if i:
             n += 1
-    if n > 1:
-        raise ValueError("You can only specify one of --train, --test or --inference.")
+    if n > 1 or n == 0:
+        print("********************«***************\nYou must  specify ONE of --train, --test or --inference.\n************************************")
+        return
 
     if  test:
         logger.info(' ARE YOU TESTING THE CORRECT CKPT? <<<')
@@ -94,7 +209,7 @@ def main(train, test, inference, config):
     elif inference:
         job_type = "inference"
 
-    logger.info(f"train={train}, test={test}, inference={inference}\n, config = ")
+    logger.info(f"train={train}, test={test}, inference={inference}, config =  {config}")
 
     device = pick_device()                       
     logger.info(f" Using device: {device}")
@@ -103,87 +218,109 @@ def main(train, test, inference, config):
 
     torch.set_float32_matmul_precision('medium')
     pl.seed_everything(42, workers=True)
+    
     #......................................................
-    # USER DEFINITIONS
-    root_dir = Path('/Users/alexwebb/laptop_coding/floodai/INFERSAR/data/4final')
-    logger.info(f"repo root: {root_dir}")
-    env_file = root_dir / ".env"
-    dataset_pth = root_dir / "dataset" 
-    working_dir = root_dir / "training"
-    ckpt_folder = root_dir / "checkpoints" / "ckpt_input"
-    project = "mac_py_package"
+    # INITIALIZE PATHS
+    project_dir = Path(__file__).resolve().parent.parent
+    logger.info(f"Project directory: {project_dir}")
+    
+    # Initialize centralized path management
+    paths = ProjectPaths(project_dir, image_code="0000")
+    logger.info(f"Data directory: {paths.data_dir}")
+    
+    # Validate paths for the current job type
+    path_errors = paths.validate_paths(job_type)
+    if path_errors:
+        for error in path_errors:
+            logger.error(error)
+        raise FileNotFoundError("Required paths validation failed. See errors above.")
+    
+    #......................................................
+    # CONFIGURATION PARAMETERS
     dataset_name = "sen1floods11"  # "sen1floods11" or "copernicus_floods"
-    image_code = "0000"  # Placeholder for image code, can be set in config
-    images_dir = dataset_pth/ 'S1HAnd'
-    labels_dir = dataset_pth/ 'LabelHand'
-    train_list = dataset_pth / "flood_train_data.csv"
-    val_list = dataset_pth / "flood_valid_data.csv"
-    test_list = dataset_pth / "flood_test_data.csv"
     run_name = "_"
     input_is_linear = False   # True for copernicus direct downloads, False for Sen1floods11
+    
+    # Training parameters
     subset_fraction = 1
     batch_size = 8
-    max_epoch =15
+    max_epoch = 3
     early_stop = True
-    patience=3
+    patience = 3
     num_workers = 8
-    WandB_online = False
+    
+    # Logging and model parameters
+    WandB_online = True
     LOGSTEPS = 50
     PRETRAINED = True
-    # inputs = ['vv', 'vh', 'mask']
     in_channels = 2
     DEVRUN = 0
+    
+    # Loss function parameters
     user_loss = 'bce_dice' #'smp_bce' # 'bce_dice' #'focal' # 'bce_dice' # focal'
     focal_alpha = 0.8
     focal_gamma = 8
     bce_weight = 0.35 # FOR BCE_DICE
-    minmax_path = Path("/Users/alexwebb/laptop_coding/floodai/InferSAR/configs/global_minmax_INPUT/global_minmax.json")
-    output_filename = '_name' # OVERRIDDDEN IN CONFIG
+    
+    # Data processing parameters
     db_min = -30.0
     db_max = 0.0
-    MAKE_TIFS = 0
-    MAKE_DATAARRAY= 0
-    MAKE_TILES = 0
     tile_size = 512
     stride = tile_size
+    
+    # Processing flags
+    MAKE_TIFS = 0
+    MAKE_DATAARRAY = 0
+    MAKE_TILES = 0
+    
+    # Initialize variables
+    stitched_image = None
+    output_filename = '_name'  # Will be overridden in config
 #.......................................................
+    # MODE-SPECIFIC CONFIGURATION
     if inference:
         input_is_linear = True  # For inference, we assume input is linear
-        # INFERENCE
         threshold = 0.3
-        predict_input = working_dir / "predict_input"
-        working_dir = root_dir / 'predictions'
-        file_list = working_dir / "predict_tile_list.csv"
+        inference_paths = paths.get_inference_paths(
+            sensor='sensor', 
+            date='date', 
+            tile_size=tile_size, 
+            threshold=threshold, 
+            output_filename=output_filename
+        )
+        
+        predict_input = inference_paths['predict_input']
+        working_dir = paths.predictions_dir
+        file_list = inference_paths['file_list']
+        stitched_image = inference_paths['stitched_image']
+        
         MAKE_TIFS = 0
         MAKE_DATAARRAY = 1
         MAKE_TILES = 1
-        sensor = 'sensor'
-        date = 'date'
         subset_fraction = 1
         batch_size = 1
         shuffle = False
-        # TODO GET ABOVE VALUES FROM SOMEWHERE EG FILENAME
-        stitched_image = working_dir / f'{sensor}_{image_code}_{date}_{tile_size}_{threshold}{output_filename}_WATER_AI.tif'
+        
         if stitched_image.exists():
             logger.info(f"---overwriting existing file! : {stitched_image}")
         logger.info(f'config mode = {config}')
 
     if config:
-        config_path = Path('/Users/alexwebb/laptop_coding/floodai/InferSAR/configs/floodaiv2_config.yaml')
-        logger.info(f"---config.name: {config.name}")
-        logger.info(f"---Current config: {wandb.config}")
-        with open(config_path, "r") as file:
-            config = yaml.safe_load(file)
-        threshold = config["threshold"] 
-        tile_size = config["tile_size"] 
-        input_file = Path(config['input_file'])
-        output_folder = Path(config['output_folder'])
-        output_filename = Path(config['output_filename'])
+        if not paths.main_config.exists():
+            raise FileNotFoundError(f"Config file not found: {paths.main_config}")
+        logger.info(f"Loading config from: {paths.main_config}")
+        with open(paths.main_config, "r") as file:
+            config_data = yaml.safe_load(file)
+        threshold = config_data["threshold"] 
+        tile_size = config_data["tile_size"] 
+        input_file = Path(config_data['input_file'])
+        output_folder = Path(config_data['output_folder'])
+        output_filename = Path(config_data['output_filename'])
 
     persistent_workers = num_workers > 0
 
-    if env_file.exists():
-        load_dotenv(env_file)
+    if paths.env_file.exists():
+        load_dotenv(paths.env_file)
     else:
         logger.info("Warning: .env not found; using shell environment")
 
@@ -193,7 +330,8 @@ def main(train, test, inference, config):
     # if user_loss != 'bce_dice':
     #     bce_weight = None
 
-    #####       WAND INITIALISEATION + CONFIG       ###########
+    #####       WANDB INITIALIZATION + CONFIG       ###########
+    project = "mac_py_package"
     wandb_config = {
         "name": run_name,
         "dataset_name": dataset_name,
@@ -205,7 +343,10 @@ def main(train, test, inference, config):
         "bce_weight": bce_weight,
         "max_epoch": max_epoch,
     }
-    wandb_logger = wandb_initialization(job_type, root_dir, project, dataset_name, run_name,train_list, val_list, test_list, wandb_config, WandB_online)
+    wandb_logger = wandb_initialization(
+        job_type, paths.root_dir, project, dataset_name, run_name,
+        paths.train_csv, paths.val_csv, paths.test_csv, wandb_config, WandB_online
+    )
     config = wandb.config
     if user_loss == "focal":
         logger.info(f"---focal_alpha: {wandb.config.get('focal_alpha', 'Not Found')}")
@@ -222,31 +363,44 @@ def main(train, test, inference, config):
 
     if is_sweep_run():
         logger.info(" IN SWEEP MODE <<<")
+    
     #........................................................
-    ckpt = next(ckpt_folder.rglob("*.ckpt"), None)
+    # CHECKPOINT AND PATH SETUP
+    ckpt = next(paths.ckpt_input_dir.rglob("*.ckpt"), None)
     if ckpt is None:
-        raise FileNotFoundError(f"No checkpoint found in {ckpt_folder}")
+        raise FileNotFoundError(f"No checkpoint found in {paths.ckpt_input_dir}")
     
 # ##################################################################
     #########    TRAIN / TEST - CREATE DATA LOADERS    #########
-    if  train:
-        file_list = train_list
-    if test:
-        file_list = test_list
-    if train or test:
-        save_tiles_path = dataset
-        training_tiles = save_tiles_path
-    if inference:
-        save_tiles_path = working_dir /  f'{image_code}_tiles'
+    if train:
+        file_list = paths.train_csv
+        training_paths = paths.get_training_paths()
+        save_tiles_path = training_paths['tiles_dir']
         tiles_dir = save_tiles_path
+    elif test:
+        file_list = paths.test_csv
+        training_paths = paths.get_training_paths()
+        save_tiles_path = training_paths['tiles_dir']
+        tiles_dir = save_tiles_path
+    elif inference:
+        inference_paths = paths.get_inference_paths()
+        save_tiles_path = inference_paths['tiles_dir']
+        tiles_dir = save_tiles_path
+        
     metadata_path = save_tiles_path / 'tile_metadata_pth.json'
 
-    # CREATE THE EXTRACTED FOLDER
-    extracted = working_dir / f'{image_code}_extracted'
-    if save_tiles_path.exists():
-        # logger.info(f" Deleting existing tiles folder: {save_tiles_path}")
-        # delete the folder and create a new one
+    # CREATE THE EXTRACTED FOLDER FOR INFERENCE
+    if inference:
+        extracted = paths.working_dir / f'{paths.image_code}_extracted'
+    else:
+        extracted = None
+    
+    # Only delete and recreate folders for inference mode
+    if inference and save_tiles_path.exists():
+        logger.info(f"--- Deleting existing inference tiles folder: {save_tiles_path}")
         shutil.rmtree(save_tiles_path)
+        save_tiles_path.mkdir(exist_ok=True, parents=True)
+    elif inference:
         save_tiles_path.mkdir(exist_ok=True, parents=True)
 
     logger.info(f' MAKE_TIFS = {MAKE_TIFS}, MAKE_DATAARRAY = {MAKE_DATAARRAY}, MAKE_TILES = {MAKE_TILES}   ')
@@ -292,14 +446,22 @@ def main(train, test, inference, config):
         # fnal_extent = extracted / f'{image_code}_32_final_extent.tif'
         # make_float32_inf(reproj_extent, final_extent
 
+    # Initialize cube variable for inference mode
+    cube = None
+    
     if MAKE_DATAARRAY:
-        create_event_datacube_copernicus(predict_input, image_code)
+        if not predict_input.exists():
+            raise FileNotFoundError(f"Predict input directory not found: {predict_input}")
+        create_event_datacube_copernicus(predict_input, paths.image_code)
         cube = next(predict_input.rglob("*.nc"), None)
         if cube is None:
-            logger.info(f"---No data cube found in {predict_input.name}")
+            logger.error(f"No data cube found in {predict_input}")
             return  
 
     if MAKE_TILES:
+        if cube is None:
+            logger.error("Cannot create tiles: no data cube available")
+            return
         # TILE DATACUBE
         tiles, metadata = tile_datacube_rxr_inf(cube, save_tiles_path, tile_size=tile_size, stride=stride, percent_non_flood=0, inference = inference) 
 
@@ -308,50 +470,120 @@ def main(train, test, inference, config):
         logger.info(f"---Saved metadata to {metadata_path}")
         logger.info(f"{len(tiles)} tiles saved to {save_tiles_path}")
         logger.info(f"{len(metadata)} metadata saved to {save_tiles_path}")
-    # metadata = Path(save_tiles_path) / 'tile_metadata_pth.json'
+        
         inference_list_dataframe = create_inference_csv(metadata)
         write_df_to_csv(inference_list_dataframe, file_list)
+        
+        # Verify the CSV was created successfully
+        if not file_list.exists():
+            logger.error(f"Failed to create inference CSV file: {file_list}")
+            return
+        logger.info(f"Created inference CSV with {len(inference_list_dataframe)} entries: {file_list}")
     
         ########     INITIALISE THE MODEL     #########
     model = UnetModel(encoder_name='resnet34', in_channels=in_channels, classes=1, pretrained=PRETRAINED).to(device)
     # LOAD THE CHECKPOINT
-    checkpoint = torch.load(ckpt)
+    try:
+        checkpoint = torch.load(ckpt, map_location=device)
+    except Exception as e:
+        logger.error(f"Failed to load checkpoint {ckpt}: {e}")
+        return
 
     # EXTRACT THE MODEL STATE DICT
     cleaned_state_dict = clean_checkpoint_keys(checkpoint["state_dict"])
 
     # LOAD THE MODEL STATE DICT
-    model.load_state_dict(cleaned_state_dict)
+    try:
+        model.load_state_dict(cleaned_state_dict)
+        logger.info(f"Successfully loaded model from checkpoint: {ckpt}")
+    except Exception as e:
+        logger.error(f"Failed to load model state dict: {e}")
+        return
 
     logger.info(" Creating data loaders")
-    logger.info(f"---tileS_dir: {tiles_dir}")
+    logger.info(f"---tiles_dir: {tiles_dir}")
     logger.info(f"---file_list: {file_list}")
     logger.info(f'---input_is_linear: {input_is_linear}')
 
 # ////////////////////////////////////////////////////////////
 
-    # TRAIN + INFERENCE : CREATE THE  DATALOADER
-    dataset = Sen1Dataset(
-        job_type = job_type,
-        tiles_dir = tiles_dir,
-        images_dir = images_dir,
-        labels_dir = labels_dir,
-        csv_path = file_list,
-        image_code=image_code,
-        input_is_linear=input_is_linear,
-        db_min=db_min,
-        db_max=db_max)
-    
-    subset_indices = random.sample(range(len(dataset)), int(subset_fraction * len(dataset)))
-    subset = Subset(dataset, subset_indices)
-        # MAKE DATALOADER FROM DATASET
-
-    dataloader = DataLoader( subset,
-        batch_size = batch_size,  # Batch size of 1 for inference 
-        num_workers = 4,
-        persistent_workers = True,  # Keep workers alive for faster loading  
-  # Adjust based on your system
-        shuffle = job_type in ("train", "test") ,)
+    # CREATE DATALOADERS BASED ON JOB TYPE
+    if train:
+        # Training dataset
+        train_dataset = Sen1Dataset(
+            job_type="train",
+            working_dir=paths.root_dir,
+            images_dir=paths.images_dir,
+            labels_dir=paths.labels_dir,
+            csv_path=paths.train_csv,
+            image_code=paths.image_code,
+            input_is_linear=input_is_linear,
+            db_min=db_min,
+            db_max=db_max)
+        
+        # Validation dataset
+        val_dataset = Sen1Dataset(
+            job_type="val",
+            working_dir=paths.root_dir,
+            images_dir=paths.images_dir,
+            labels_dir=paths.labels_dir,
+            csv_path=paths.val_csv,
+            image_code=paths.image_code,
+            input_is_linear=input_is_linear,
+            db_min=db_min,
+            db_max=db_max)
+        
+        # Apply subset if needed
+        if subset_fraction < 1:
+            train_subset_indices = random.sample(range(len(train_dataset)), int(subset_fraction * len(train_dataset)))
+            train_dataset = Subset(train_dataset, train_subset_indices)
+            # Use larger subset for validation to ensure class diversity
+            val_subset_fraction = max(subset_fraction, 0.8)  # Use at least 80% of validation data
+            val_subset_indices = random.sample(range(len(val_dataset)), int(val_subset_fraction * len(val_dataset)))
+            val_dataset = Subset(val_dataset, val_subset_indices)
+            logger.info(f"Using {subset_fraction} of training data and {val_subset_fraction} of validation data")
+        
+        # Create dataloaders
+        train_dl = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, persistent_workers=persistent_workers)
+        val_dl = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, persistent_workers=persistent_workers)
+        
+    elif test:
+        # Test dataset
+        test_dataset = Sen1Dataset(
+            job_type="test",
+            working_dir=paths.root_dir,
+            images_dir=paths.images_dir,
+            labels_dir=paths.labels_dir,
+            csv_path=paths.test_csv,
+            image_code=paths.image_code,
+            input_is_linear=input_is_linear,
+            db_min=db_min,
+            db_max=db_max)
+        
+        # Apply subset if needed
+        if subset_fraction < 1:
+            test_subset_indices = random.sample(range(len(test_dataset)), int(subset_fraction * len(test_dataset)))
+            test_dataset = Subset(test_dataset, test_subset_indices)
+        
+        test_dl = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, persistent_workers=persistent_workers)
+        
+    elif inference:
+        # Inference dataset
+        inference_dataset = Sen1Dataset(
+            job_type="inference",
+            working_dir=working_dir,
+            images_dir=paths.images_dir,
+            labels_dir=paths.labels_dir,
+            csv_path=file_list,
+            image_code=paths.image_code,
+            input_is_linear=input_is_linear,
+            db_min=db_min,
+            db_max=db_max)
+        
+        subset_indices = random.sample(range(len(inference_dataset)), int(subset_fraction * len(inference_dataset)))
+        inference_subset = Subset(inference_dataset, subset_indices)
+        
+        dataloader = DataLoader(inference_subset, batch_size=batch_size, num_workers=num_workers, persistent_workers=persistent_workers, shuffle=False)
 
     if train or test:
         ########.     CHOOE LOSS FUNCTION     #########
@@ -362,7 +594,7 @@ def main(train, test, inference, config):
             mode="min",
     )
         ###########    SETUP TRAINING LOOP    #########
-        ckpt_dir = root_dir / "checkpoints" / "ckpt_training"
+        ckpt_dir = paths.ckpt_training_dir
         ckpt_dir.mkdir(parents=True, exist_ok=True)
         checkpoint_callback = ModelCheckpoint(
             dirpath=ckpt_dir,
@@ -438,6 +670,14 @@ def main(train, test, inference, config):
             shutil.rmtree(predictions_folder)
         predictions_folder.mkdir(exist_ok=True)
 
+        # Load metadata for stitching
+        if not metadata_path.exists():
+            logger.error(f"Metadata file not found: {metadata_path}")
+            return
+        
+        with open(metadata_path, "r") as f:
+            metadata = json.load(f)
+
         #  # MAKE PREDICTION TILES
         with torch.no_grad():
             for imgs, valids, fnames in tqdm(dataloader, desc="Predict"):
@@ -459,12 +699,15 @@ def main(train, test, inference, config):
                     with rasterio.open(dst_path, "w", **profile) as dst:
                         dst.write(out.astype("float32"), 1)   
         # STITCH PREDICTION TILES
-        input_image = next(extracted.rglob("*.tif"), None) 
-        if ('vv' in input_image.name.lower() or 'vh' in input_image.name.lower()) and input_image.suffix.lower() == '.tif':
+        input_image = next(extracted.rglob("*.tif"), None) if extracted.exists() else None
+        if input_image and ('vv' in input_image.name.lower() or 'vh' in input_image.name.lower()) and input_image.suffix.lower() == '.tif':
             logger.info(f"---input_image: {input_image}")
             logger.info(f"---predictions_folder: {predictions_folder}")
-            logger.info(f'---input_folder: {input_folder}')
-            stitch_tiles(metadata, predictions_folder, stitched_image, input_image)  
+            logger.info(f'---extracted folder: {extracted}')
+            stitch_tiles(metadata, predictions_folder, stitched_image, input_image)
+        else:
+            logger.warning(f"No suitable input image found in {extracted} for stitching")
+            logger.info("Prediction tiles created but stitching skipped")  
 
     
     # Cleanup

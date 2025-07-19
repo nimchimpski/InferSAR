@@ -43,6 +43,15 @@ from scripts.train.train_functions import plot_auc_pr
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Utility functions for tensor operations
+def one_hot(tensor: torch.Tensor, num_classes: int) -> torch.Tensor:
+    """Convert tensor to one-hot encoding"""
+    return F.one_hot(tensor.long(), num_classes=num_classes).permute(0, 3, 1, 2).float()
+
+def simplex(tensor: torch.Tensor, axis: int = 1) -> bool:
+    """Check if tensor represents a probability distribution (sums to 1)"""
+    return torch.allclose(torch.sum(tensor, dim=axis), torch.ones_like(torch.sum(tensor, dim=axis)))
+
 
 class FloodDataset_from_multiband(Dataset):
     def __init__(self, tile_list, tile_root, stage='train', inputs=None):
@@ -404,7 +413,9 @@ class Sen1Dataset(Dataset):
     ]:
         # --- load VV & VH + valid mask from the tile file ---
         img_path = self.img_paths[idx]
-        logger.info(f"---Loading image from {img_path}")
+        # Log occasionally to avoid spam
+        if idx % 100 == 0:
+            logger.info(f"---Loading image from {img_path}")
 
         with rasterio.open(img_path) as src:
             vv_arr  = src.read(1).astype(np.float32)
@@ -434,12 +445,13 @@ class Sen1Dataset(Dataset):
 
         # stack & convert to tensor
         img_tensor = torch.from_numpy(np.stack([vv_arr, vh_arr], axis=0))
-        #  log all info about tensor
-        logger.info(f"GETITEM TENSOR INFO")  # Should be [2,H,W]
-        logger.info(f"Image path: {img_path}")
-        logger.info(f"Image tensor dtype: {img_tensor.dtype}")  # Should be
-        logger.info(f"Image tensor min: {img_tensor.min()}, max: {img_tensor.max()}")
-        logger.info(f"Image tensor shape: {img_tensor.shape}")  # Should be
+        # Log tensor info only occasionally to avoid spam
+        if idx % 100 == 0:  # Log every 100th item
+            logger.info(f"GETITEM TENSOR INFO (sample {idx})")
+            logger.info(f"Image path: {img_path}")
+            logger.info(f"Image tensor dtype: {img_tensor.dtype}")
+            logger.info(f"Image tensor min: {img_tensor.min()}, max: {img_tensor.max()}")
+            logger.info(f"Image tensor shape: {img_tensor.shape}")
         assert img_tensor.shape[0] == 2, f"Expected 2 channels, got {img_tensor.shape[0]}"
 
         # --- now branch by job_type ---
@@ -451,8 +463,9 @@ class Sen1Dataset(Dataset):
 
             # valid_mask = 1 for pixels ≠ –1
             valid_mask = torch.from_numpy((raw != -1).astype(np.float32))
-            # flood mask = 1 for pixels == 1
-            mask       = torch.from_numpy((raw == 1).astype(np.float32))
+            # Convert raw to proper mask: keep 0/1 for valid pixels, set invalid (-1) to 255
+            mask_np = np.where(raw == -1, 255, raw).astype(np.float32)
+            mask = torch.from_numpy(mask_np)
 
             # add channel dims
             return (
@@ -790,10 +803,14 @@ class Segmentation_training_loop(pl.LightningModule):
             logits_np = torch.sigmoid(all_logits).detach().cpu().numpy().flatten()
             labels_np = all_labels.detach().cpu().numpy().flatten()
 
-            # GET RID OF THE 255 INVALID CHANNEL
-            labels_np = labels_np != 255
-            if labels_np.sum() == 0:
+            # GET RID OF THE 255 INVALID PIXELS AND FILTER BOTH ARRAYS
+            valid_mask = labels_np != 255
+            if valid_mask.sum() == 0:
                 raise ValueError("Validation batch contains only ignore pixels.")
+            
+            # Apply mask to both logits and labels to keep only valid pixels
+            logits_np = logits_np[valid_mask]
+            labels_np = labels_np[valid_mask]
 
             # DEBUGGING
             # Check for NaN or Inf values in logits_np and labels_np
@@ -806,10 +823,22 @@ class Segmentation_training_loop(pl.LightningModule):
 
             # COUNT UNIQUE CLASSES
             unique_classes, class_counts = np.unique(labels_np, return_counts=True)
-            # logger.info(f"---Unique classes: {unique_classes}, Counts: {class_counts}")
-            # Raise an error if there's only one class
+            logger.info(f"---Validation AUC-PR calculation:")
+            logger.info(f"---Total validation pixels: {len(labels_np)}")
+            logger.info(f"---Unique classes: {unique_classes}")
+            logger.info(f"---Class counts: {class_counts}")
+            logger.info(f"---Class distribution: {dict(zip(unique_classes, class_counts))}")
+            
+            # Skip AUC-PR calculation if there's only one class
             if len(unique_classes) < 2:
-                raise ValueError("---Precision-Recall curve requires at least two classes in the ground truth.")
+                logger.warning("---Skipping AUC-PR calculation: only one class present in validation data")
+                logger.warning("---This may indicate:")
+                logger.warning("---  1. Validation subset is too small")
+                logger.warning("---  2. Dataset is heavily imbalanced")
+                logger.warning("---  3. Wrong subset_fraction setting")
+                auc_pr = 0.0  # Default value when AUC-PR cannot be calculated
+                self.log('val_auc_pr', auc_pr, prog_bar=True, logger=True)
+                return
             
             try:
                 precision, recall, thresholds = precision_recall_curve(labels_np, logits_np)
@@ -837,7 +866,7 @@ class Segmentation_training_loop(pl.LightningModule):
 
     
     def on_test_epoch_end(self):
-        # Ensure validation_outputs has been populated
+        # Ensure test_outputs has been populated
         logger.info(f'+++++++++++++    on test epoch end')
         if not self.test_outputs:
             raise ValueError("---test outputs are empty. Check your test_step implementation.")
@@ -849,12 +878,26 @@ class Segmentation_training_loop(pl.LightningModule):
         logits_np = torch.sigmoid(all_logits).cpu().numpy().flatten()
         masks_np = all_masks.cpu().numpy().flatten()
 
-            # Debugging statistics
+        # GET RID OF THE 255 INVALID PIXELS AND FILTER BOTH ARRAYS
+        valid_mask = masks_np != 255
+        if valid_mask.sum() == 0:
+            raise ValueError("Test batch contains only ignore pixels.")
+        
+        # Apply mask to both logits and labels to keep only valid pixels
+        logits_np = logits_np[valid_mask]
+        masks_np = masks_np[valid_mask]
+
+        # Debugging statistics
+        logger.info(f"Test AUC-PR calculation:")
+        logger.info(f"Total test pixels: {len(masks_np)}")
         logger.info(f"Logits Stats - Min: {logits_np.min()}, Max: {logits_np.max()}, Mean: {logits_np.mean()}")
-        logger.info(f"Labels Unique: {np.unique(masks_np, return_counts=True)}")
+        unique_classes, class_counts = np.unique(masks_np, return_counts=True)
+        logger.info(f"Unique classes: {unique_classes}")
+        logger.info(f"Class counts: {class_counts}")
+        logger.info(f"Class distribution: {dict(zip(unique_classes, class_counts))}")
 
         # Handle edge cases (e.g., single-class masks)
-        if len(np.unique(masks_np)) < 2:
+        if len(unique_classes) < 2:
             logger.info("---Skipping AUC-PR calculation due to insufficient class variability.")
             return
 
@@ -885,8 +928,11 @@ class Segmentation_training_loop(pl.LightningModule):
         if valid.sum() == 0:
         # skip batch that contains only ignore pixels
             return torch.tensor(0.), torch.tensor(0.), torch.tensor(0.), torch.tensor(0.)
-        preds = preds[valid].unsqueeze(1)  # Apply the mask to predictions
-        masks = masks[valid].long().unsqueeze(1)  # Apply the mask to ground truth
+        
+        # Convert valid to boolean for indexing
+        valid_bool = valid.bool()
+        preds = preds[valid_bool].unsqueeze(1)  # Apply the mask to predictions
+        masks = masks[valid_bool].long().unsqueeze(1)  # Apply the mask to ground truth
 
         # Compute metrics
         tp, fp, fn, tn = smp.metrics.get_stats(preds, masks.long(), mode='binary')
