@@ -361,7 +361,7 @@ class Sen1Dataset(Dataset):
         db_min:         float = -30.0,
         db_max:         float =   0.0,
     ):
-        assert job_type in ("train","val","inference")
+        assert job_type in ("train","val", "test", "inference")
         self.job_type        = job_type
         self.working_dir    = working_dir
         self.image_code      = image_code
@@ -390,7 +390,7 @@ class Sen1Dataset(Dataset):
                 self.fnames.append(img_name)
 
                 # only for train/val do we need the second column
-                if job_type in ("train","val"):
+                if job_type in ("train","val", "test"):
                     mask_name = row[1]
                     self.mask_paths.append(mask_dir / mask_name)
 
@@ -455,7 +455,7 @@ class Sen1Dataset(Dataset):
         assert img_tensor.shape[0] == 2, f"Expected 2 channels, got {img_tensor.shape[0]}"
 
         # --- now branch by job_type ---
-        if self.job_type in ("train","val"):
+        if self.job_type in ("train","val", "test"):
             # load the mask, build mask & valid_mask from raw values
             mask_path = self.mask_paths[idx]
             with rasterio.open(mask_path) as src:
@@ -486,7 +486,7 @@ class Sen1Dataset(Dataset):
 
 class Segmentation_training_loop(pl.LightningModule):
 
-    def __init__(self, model, loss_fn, save_path, user_loss):
+    def __init__(self, model, loss_fn, save_path, loss_description):
         super().__init__()
         self.model = model
         self.loss_fn = loss_fn
@@ -495,7 +495,7 @@ class Segmentation_training_loop(pl.LightningModule):
         # Container to store validation results
         self.validation_outputs = []
         self.dynamic_weights = False
-        self.user_loss = user_loss
+        self.loss_description = loss_description
         self.test_images = []
 
     def forward(self, x):
@@ -526,14 +526,14 @@ class Segmentation_training_loop(pl.LightningModule):
         loss_per_pixel = self.loss_fn(logits, masks)  
         loss_per_pixel = (loss_per_pixel * valids.float()).sum() / valids.sum()  # Apply valid mask to loss
         # ONLY APPLIES DYNAMIC WEIGHTS TO BCE LOSS
-        loss, dynamic_weights = self.dynamic_weight_chooser(masks, loss_per_pixel, self.user_loss)
+        loss, dynamic_weights = self.dynamic_weight_chooser(masks, loss_per_pixel, self.loss_description)
         # logger.info(f'---used dynamic weights = {dynamic_weights}')
         assert logits.device == masks.device
 
         lr = self._get_current_lr()
         # self.log('lr', lr,  on_step=True, on_epoch=True, prog_bar=True, logger=True)
 
-        _, _, _, _= self.metrics_maker(logits, masks, valids, job_type, loss, self.user_loss, lr)
+        _, _, _, _= self.metrics_maker(logits, masks, valids, job_type, loss, self.loss_description, lr)
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -560,7 +560,7 @@ class Segmentation_training_loop(pl.LightningModule):
         loss_per_pixel = self.loss_fn(logits, masks)
         loss_per_pixel = (loss_per_pixel * valids).sum() / valids.sum()  # Apply valid mask to loss
 
-        loss, dynamic_weights = self.dynamic_weight_chooser(masks, loss_per_pixel, self.user_loss)
+        loss, dynamic_weights = self.dynamic_weight_chooser(masks, loss_per_pixel, self.loss_description)
         assert logits.device == masks.device
         # Check if this is the last batch and save visualization
         val_dataloader = self.trainer.val_dataloaders
@@ -575,13 +575,13 @@ class Segmentation_training_loop(pl.LightningModule):
         # This is the last epoch
             # logger.info(f'---used dynamic weights = {dynamic_weights}')
             if not is_sweep_run():
-                self.log_combined_visualization(images, logits, masks, valids, fnames, self.user_loss)
+                self.log_combined_visualization(images, logits, masks, valids, fnames, self.loss_description)
 
             # Save images if this is the best-performing model
             # if loss == self.trainer.checkpoint_callback.best_model_score and batch_idx < 2:
-            #     self.log_combined_visualization(images, logits, masks, self.user_loss)
+            #     self.log_combined_visualization(images, logits, masks, self.loss_description)
 
-        ioumean, precisionmean , recall, f1mean  = self.metrics_maker(logits, masks, valids, job_type,  loss, self.user_loss )
+        ioumean, precisionmean , recall, f1mean  = self.metrics_maker(logits, masks, valids, job_type,  loss, self.loss_description )
 
         return {"loss": loss, "precision": precisionmean,"recall": recall, "iou": ioumean,  "f1": f1mean, 'logits': logits, 'labels': masks}   
 
@@ -614,7 +614,7 @@ class Segmentation_training_loop(pl.LightningModule):
         loss_per_pixel = self.loss_fn(logits, masks)
         loss_per_pixel = (loss_per_pixel * valids).sum() / valids.sum()  # Apply valid mask to loss
 
-        loss, dynamic_weights = self.dynamic_weight_chooser(masks, loss_per_pixel, self.user_loss)
+        loss, dynamic_weights = self.dynamic_weight_chooser(masks, loss_per_pixel, self.loss_description)
         assert logits.device == masks.device
 
         # logger.info(f"---weighted_loss device: {weighted_loss.device}")
@@ -626,7 +626,7 @@ class Segmentation_training_loop(pl.LightningModule):
         # if batch_idx == 1:
         #     # logger.info('---batch_idx:', batch_idx)
         #     # logger.info(f"---Saving test outputs for batch {batch_idx}")
-        self.log_combined_visualization(images, logits, masks, valids, self.user_loss)
+        self.log_combined_visualization(images, logits, masks, valids, self.loss_description)
         #     # JUST logger.info ON FIRST BATCH
         #     if batch_idx == 1:
         #         logger.info(f'---used dynamic weights = {dynamic_weights}')
@@ -634,7 +634,7 @@ class Segmentation_training_loop(pl.LightningModule):
 
         
             # CALCULATE METRICS
-        ioumean, precisionmean, recallmean, f1mean = self.metrics_maker(logits, masks, job_type, loss, self.user_loss)
+        ioumean, precisionmean, recallmean, f1mean = self.metrics_maker(logits, masks, job_type, loss, self.loss_description)
 
         return { "loss": loss,  "precision": precisionmean, "recall": recallmean, "iou": ioumean, "f1": f1mean, 'logits': logits, 'labels': masks}
     
@@ -667,10 +667,10 @@ class Segmentation_training_loop(pl.LightningModule):
 
         return weights
     
-    def dynamic_weight_chooser(self, masks, loss, user_loss):
+    def dynamic_weight_chooser(self, masks, loss, loss_description):
         # logger.info(f'+++++++++++++    dynamic weight chooser')
         # logger.info(f'---loss_fn: {self.loss_fn}')
-        if user_loss in ['smp_bce']:
+        if loss_description in ['smp_bce']:
 
             # logger.info(f'*********computing dynamic weights')
             weights = self.compute_dynamic_weights(masks)
@@ -918,7 +918,7 @@ class Segmentation_training_loop(pl.LightningModule):
         # Log AUC-PR for the test set
         self.log('auc_pr_test', auc_pr, prog_bar=True, logger=True)
 
-    def metrics_maker(self, logits, masks, valid, job_type, loss, user_loss, lr=None):
+    def metrics_maker(self, logits, masks, valid, job_type, loss, loss_description, lr=None):
   
         mthresh = 0.5
         probs = torch.sigmoid(logits) 

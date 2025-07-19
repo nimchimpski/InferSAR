@@ -244,7 +244,7 @@ def main(train, test, inference, config):
     # Training parameters
     subset_fraction = 1
     batch_size = 8
-    max_epoch = 3
+    max_epoch = 15
     early_stop = True
     patience = 3
     num_workers = 8
@@ -257,7 +257,7 @@ def main(train, test, inference, config):
     DEVRUN = 0
     
     # Loss function parameters
-    user_loss = 'bce_dice' #'smp_bce' # 'bce_dice' #'focal' # 'bce_dice' # focal'
+    loss_description = 'bce_dice' #'smp_bce' # 'bce_dice' #'focal' # 'bce_dice' # focal'
     focal_alpha = 0.8
     focal_gamma = 8
     bce_weight = 0.35 # FOR BCE_DICE
@@ -324,10 +324,10 @@ def main(train, test, inference, config):
     else:
         logger.info("Warning: .env not found; using shell environment")
 
-    # if user_loss != 'focal':
+    # if loss_description != 'focal':
     #     focal_alpha = None
     #     focal_gamma = None
-    # if user_loss != 'bce_dice':
+    # if loss_description != 'bce_dice':
     #     bce_weight = None
 
     #####       WANDB INITIALIZATION + CONFIG       ###########
@@ -337,7 +337,7 @@ def main(train, test, inference, config):
         "dataset_name": dataset_name,
         "subset_fraction": subset_fraction,
         "batch_size":batch_size,
-        "user_loss": user_loss,
+        "loss_description": loss_description,
         "focal_alpha": focal_alpha,
         "focal_gamma": focal_gamma,
         "bce_weight": bce_weight,
@@ -348,14 +348,14 @@ def main(train, test, inference, config):
         paths.train_csv, paths.val_csv, paths.test_csv, wandb_config, WandB_online
     )
     config = wandb.config
-    if user_loss == "focal":
+    if loss_description == "focal":
         logger.info(f"---focal_alpha: {wandb.config.get('focal_alpha', 'Not Found')}")
         logger.info(f"---focal_gamma: {wandb.config.get('focal_gamma', 'Not Found')}")
-        loss_desc = f"{user_loss}_{config.focal_alpha}_{config.focal_gamma}" 
-    elif user_loss == "bce_dice":
-        loss_desc = f"{user_loss}_{config.bce_weight}"
+        loss_desc = f"{loss_description}_{config.focal_alpha}_{config.focal_gamma}" 
+    elif loss_description == "bce_dice":
+        loss_desc = f"{loss_description}_{config.bce_weight}"
     else:
-        loss_desc = user_loss
+        loss_desc = loss_description
 
     run_name = f"{dataset_name}_{timestamp}_BS{config.batch_size}_s{config.subset_fraction}_{loss_desc}"  
     wandb.run.name = run_name
@@ -587,7 +587,7 @@ def main(train, test, inference, config):
 
     if train or test:
         ########.     CHOOE LOSS FUNCTION     #########
-        loss_fn = loss_chooser(user_loss, config.focal_alpha, config.focal_gamma, config.bce_weight)
+        loss_fn = loss_chooser(loss_description, config.focal_alpha, config.focal_gamma, config.bce_weight)
         early_stopping = pl.callbacks.EarlyStopping(
             monitor="val_loss",
             patience=patience,  # Stop if no improvement for 3 consecutive epochs
@@ -649,13 +649,13 @@ def main(train, test, inference, config):
         # Training or Testing
         if train:
             logger.info(" Starting training")
-            training_loop = Segmentation_training_loop(model, loss_fn, stitched_image, user_loss)
+            training_loop = Segmentation_training_loop(model, loss_fn, stitched_image, loss_description)
             trainer.fit(training_loop, train_dataloaders=train_dl, val_dataloaders=val_dl)
 
         elif test:
             logger.info(f" Starting testing with checkpoint: {ckpt}")
             training_loop = Segmentation_training_loop.load_from_checkpoint(
-                ckpt, model=model, loss_fn=loss_fn, stitched_image=stitched_image
+                checkpoint_path=ckpt,  save_path=stitched_image, loss_description=loss_description
             )
             trainer.test(model=training_loop, dataloaders=test_dl)
 
