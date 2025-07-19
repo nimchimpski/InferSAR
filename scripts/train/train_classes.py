@@ -626,7 +626,7 @@ class Segmentation_training_loop(pl.LightningModule):
         # if batch_idx == 1:
         #     # logger.info('---batch_idx:', batch_idx)
         #     # logger.info(f"---Saving test outputs for batch {batch_idx}")
-        self.log_combined_visualization(images, logits, masks, valids, self.loss_description)
+        self.log_combined_visualization(images, logits, masks, valids, fnames)
         #     # JUST logger.info ON FIRST BATCH
         #     if batch_idx == 1:
         #         logger.info(f'---used dynamic weights = {dynamic_weights}')
@@ -634,7 +634,7 @@ class Segmentation_training_loop(pl.LightningModule):
 
         
             # CALCULATE METRICS
-        ioumean, precisionmean, recallmean, f1mean = self.metrics_maker(logits, masks, job_type, loss, self.loss_description)
+        ioumean, precisionmean, recallmean, f1mean = self.metrics_maker(logits, masks, valids, job_type, loss, self.loss_description)
 
         return { "loss": loss,  "precision": precisionmean, "recall": recallmean, "iou": ioumean, "f1": f1mean, 'logits': logits, 'labels': masks}
     
@@ -703,7 +703,7 @@ class Segmentation_training_loop(pl.LightningModule):
             }
         }
     
-    def log_combined_visualization(self, images, logits, masks, valids, fnames, loss_name):
+    def log_combined_visualization(self, images, logits, masks, valids, fnames):
         """
         Visualizes input images, predictions, and ground truth masks side by side for a batch.
         """
