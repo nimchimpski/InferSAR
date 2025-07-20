@@ -40,9 +40,8 @@ from scripts.train.train_helpers import is_sweep_run
 from scripts.train.train_functions import plot_auc_pr 
 
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
+# logger.info("Logger from train_classes.py is working!")
 # Utility functions for tensor operations
 def one_hot(tensor: torch.Tensor, num_classes: int) -> torch.Tensor:
     """Convert tensor to one-hot encoding"""
@@ -224,117 +223,8 @@ class FloodDataset(Dataset):
         # input_tensor = torch.stack([model_input, mask], dim=0)  # Shape: (2, 256, 256)
         return [model_input, mask]
         # return model_input.float(), val_mask.float()
-
-
-class Sen1Dataset(Dataset):
-    def __init__(self, job_type: str, input_folder: Path, csv_path: Path,image_code: str,  input_is_linear: bool, db_min: float = -30.0, db_max: float = 0.0, ):
-        """
-        csv_path: Path to one of the split CSVs (train.csv / val.csv / test.csv/ pred.csv)
-        """
-        self.job_type = job_type
-        self.input_folder = input_folder
-        self.image_code= image_code
-        self.db_min = db_min
-        self.db_max = db_max
-        self.input_is_linear = input_is_linear
-        valid_thresh = 0.8  # Minimum fraction of valid pixels to keep a tile
-
-        self.img_paths  = []
-        self.mask_paths = []
-        orig_imgs = []
-        orig_masks = []
         
-        with open(csv_path, newline='') as f:
-            reader = csv.reader(f)
-            # assume the columns are named exactly "image" and "mask"
-            #  MAKE LISTS OF 
-            next(reader, None)  # skip header row
-            for row in reader:
-                img_rel = row[0]
-                orig_imgs.append(self.input_folder / f'{image_code}_tiles' / img_rel)
-            
-            if job_type in  ('train', 'val'):
-                mask_rel = row[1]
-                orig_masks.append(self.input_folder / f'{image_code}_tiles' / mask_rel)
-                for img_pth, mask_pth in zip(orig_imgs, orig_masks):
-                    with rasterio.open(img_pth) as src:
-                        valid = src.dataset_mask().astype(bool)
-                        # dataset_mask()==1 where data is valid, 0 where nodata or outside the swath
-                        # if np.sum(valid) >= valid_thresh:
-                        #     self.img_paths.append(img_pth)
-                        #     self.mask_paths.append(mask_pth)
-                        
 
-                        assert len(self.img_paths) == len(self.mask_paths) 
-        if len(self.img_paths) != len(self.mask_paths):
-            raise ValueError(
-                f"Split file {csv_path} has {len(orig_imgs)} images "
-                f"but {len(orig_masks)} masks."
-            )
-        if len(orig_imgs) != len(orig_masks):
-            logger.info(f"some images have no valid pixels, skipping them")
-
-
-    def __len__(self):
-        return len(self.img_paths)
-
-    def __getitem__(self, idx):
-        # 1) Load VV & VH
-        img_pth = self.img_paths[idx]
-        with rasterio.open(self.input_folder/ f'{self.image_code}_tiles' /img_pth) as src:
-            vv = src.read(1).astype(np.float32)
-            vh = src.read(2).astype(np.float32)
-            valid = src.dataset_mask().astype(bool)
-            # dataset_mask()==1 where data is valid, 0 where nodata or outside the swath
-    
-        # blank out invalid pixels:
-        vv[~valid] = np.nan
-        vh[~valid] = np.nan
-
-        #  Clip & normalize
-        for arr in (vv, vh):
-
-            #  CHECK IF LINEAR OR DB
-            if self.input_is_linear:
-                # logging.info(f"Input is linear")
-                np.clip(arr, 1e-6, None, out=arr)  # floor zeros
-                np.log10(arr, out=arr)
-                arr *= 10.0  # convert to dB
-            # elif not self.input_is_linear:
-            #     logging.info(f"Input is in dB")
-            arr = np.nan_to_num(arr,
-                               copy=False,           # modify vv in-place
-                               nan=self.db_min,
-                               posinf=self.db_max,
-                               neginf=self.db_min)
-            #  global clip
-            np.clip(arr, self.db_min, self.db_max, out=arr)
-            #  scale to [0,1]
-            arr -= self.db_min
-            arr /= (self.db_max - self.db_min)
-
-        img_tensor = np.stack([vv, vh], axis=0)  # shape [2,H,W]
-
-        if self.job_type in('train', 'val'):
-            msk_pth = self.input_folder/ f'{self.image_code}_masks' / self.mask_paths[idx]
-            with rasterio.open(msk_pth) as src:
-                raw = src.read(1).astype(np.int64)
-                valid_mask = torch.from_numpy(raw != -1).unsqueeze(0)  # valid pixels are 1, invalid are 0
-                mask = np.where(raw ==  -1, 255, raw)
-                mask = torch.from_numpy(mask.astype(np.float32)).unsqueeze(0)  # Add a channel dimension
-            return (img_tensor, mask, valid_mask, img_pth.name)
-
-        valid_mask = torch.from_numpy((raw != -1).astype(np.float32))
-        return (img_tensor, valid_mask.unsqueeze(0), img_pth.name) 
-        
-import csv
-from pathlib import Path
-from typing import Tuple, Union, List
-
-import numpy as np
-import rasterio
-import torch
-from torch.utils.data import Dataset
 
 
 class Sen1Dataset(Dataset):
@@ -386,6 +276,7 @@ class Sen1Dataset(Dataset):
             next(reader, None)  # skip header row
             for row in reader:
                 img_name = row[0]
+                logger.info(f"/////Processing image: {img_name}")
                 self.img_paths.append(tile_dir / img_name)
                 self.fnames.append(img_name)
 
@@ -393,7 +284,8 @@ class Sen1Dataset(Dataset):
                 if job_type in ("train","val", "test"):
                     mask_name = row[1]
                     self.mask_paths.append(mask_dir / mask_name)
-
+        logger.info(f"/////Found {len(self.img_paths)} images in {csv_path}")
+        logger.info(f'///imgs_paths: {self.img_paths}   ')
         # sanity check
         if job_type in ("train","val"):
             assert len(self.img_paths) == len(self.mask_paths), (
@@ -575,7 +467,7 @@ class Segmentation_training_loop(pl.LightningModule):
         # This is the last epoch
             # logger.info(f'---used dynamic weights = {dynamic_weights}')
             if not is_sweep_run():
-                self.log_combined_visualization(images, logits, masks, valids, fnames, self.loss_description)
+                self.log_combined_visualization(images, logits, masks, valids, fnames)
 
             # Save images if this is the best-performing model
             # if loss == self.trainer.checkpoint_callback.best_model_score and batch_idx < 2:

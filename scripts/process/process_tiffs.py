@@ -599,19 +599,19 @@ def make_layerdict(extracted):
 
     for file in extracted.iterdir():
         logger.info(f'---file {file}')
-        if '_vv' in file.name:
+        if '_vv' in file.name.lower():
             datas[file.name] = 'vv'
             # logger.info(f'---+image file found {file}')
-        elif '_vh' in file.name:
+        elif '_vh' in file.name.lower():
             datas[file.name] = 'vh'
             # logger.info(f'---+dem file found {file}')
-        elif '4326_slope.tif' in file.name:
+        elif '4326_slope.tif' in file.name.lower():
             datas[file.name] = 'slope'   
             # logger.info(f'---+slope file found {file}')
-        elif 'final_mask.tif' in file.name:
+        elif 'final_mask.tif' in file.name.lower():
             datas[file.name] = 'mask'
             # logger.info(f'---+mask file found {file}')
-        elif 'final_extent.tif' in file.name:
+        elif 'final_extent.tif' in file.name.lower():
             datas[file.name] = 'extent'
             # logger.info(f'---+valid file found {file}')
 
@@ -676,20 +676,20 @@ def nan_check(nparray):
         logger.info("----NO NANS FOUND")
         return True
 
-def create_event_datacube_TSX(extracted_folder, mask_code, VERSION="v1"):
+def create_event_datacube_TSX(extracted_dir, mask_code, VERSION="v1"):
     '''
     An xarray dataset is created for the event folder and saved as a .nc file.
     '''
-    logger.info(f'+++++++++++ IN CREAT EVENT DATACUBE TSX {extracted_folder.name}+++++++++++++++++')
+    logger.info(f'+++++++++++ IN CREAT EVENT DATACUBE TSX {extracted_dir.name}+++++++++++++++++')
     # FIND THE EXTRACTED FOLDER
-    # extracted_folder = list(event.rglob(f'*{mask_code}_extracted'))[0]
+    # extracted_dir = list(event.rglob(f'*{mask_code}_extracted'))[0]
 
-    logger.info(f'---extracted-folder = {extracted_folder}')
+    logger.info(f'---extracted-folder = {extracted_dir}')
     logger.info(f'---mask code= {mask_code}')
-    layerdict = make_layerdict_TSX(extracted_folder)
+    layerdict = make_layerdict_TSX(extracted_dir)
 
     logger.info(f'---making das from layerdict= {layerdict}')
-    dataarrays, layer_names = make_das_from_layerdict( layerdict, extracted_folder)
+    dataarrays, layer_names = make_das_from_layerdict( layerdict, extracted_dir)
 
     # logger.info(f'---CHECKING DATAARRAY LIST')
     # check_dataarray_list(dataarrays, layer_names)
@@ -710,25 +710,24 @@ def create_event_datacube_TSX(extracted_folder, mask_code, VERSION="v1"):
     # logger.info('---Rechunked datacube')  
 
     #######   SAVING ############
-    output_path = extracted_folder / f"{mask_code}.nc"
+    output_path = extracted_dir / f"{mask_code}.nc"
     da.to_netcdf(output_path, mode='w', format='NETCDF4', engine='netcdf4')
     
-    logger.info(f'>>>>>>>>>>>  ds saved for= {extracted_folder.name} bye bye >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n')
+    logger.info(f'>>>>>>>>>>>  ds saved for= {extracted_dir.name} bye bye >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n')
 
-def create_event_datacube_copernicus(event, image_code, VERSION="v1"):
+def create_event_datacube_copernicus(extracted_dir, image_code, VERSION="v1"):
     '''
-    An xarray dataset is created for the event folder and saved as a .nc file.
+    An xarray dataset is created for the extracted_dir folder and saved as a .nc file.
     '''
-    logger.info(f'+++++++++++ IN CREAT EVENT DATACUBE COPERNCUS {event.name}+++++++++++++++++')
+    logger.info(f'+++++++++++ IN CREAT EVENT  DATACUBE COPERNCUS in {extracted_dir.name}+++++++++++++++++')
     # FIND THE EXTRACTED FOLDER
     logger.info(f'---image code= {image_code}')
-    extracted_folder = event / f'{image_code}_extracted'
-    logger.info(f'---extracted folder = {extracted_folder}')
-    layerdict = make_layerdict(extracted_folder)
+    logger.info(f'---extracted folder = {extracted_dir}')
+    layerdict = make_layerdict(extracted_dir)
 
     logger.info(f'---making das from layerdict= {layerdict}')
 
-    dataarrays, layer_names = make_das_from_layerdict( layerdict, extracted_folder)
+    dataarrays, layer_names = make_das_from_layerdict( layerdict, extracted_dir)
 
     logger.info(f'---CHECKING DATAARRAY LIST')
     # check_dataarray_list(dataarrays, layer_names)
@@ -749,10 +748,10 @@ def create_event_datacube_copernicus(event, image_code, VERSION="v1"):
     # logger.info('---Rechunked datacube')  
 
     #######   SAVING ############
-    output_path = extracted_folder / f"{image_code}.nc"
+    output_path = extracted_dir / f"{image_code}.nc"
     da.to_netcdf(output_path, mode='w', format='NETCDF4', engine='netcdf4')
     
-    logger.info(f'##################  ds saved for= {event.name} bye bye #################\n')
+    logger.info(f'##################  ds saved in = {extracted_dir.name} bye bye #################\n')
 
 # WORK ON DEM
 def match_dem_to_mask(sar_image, dem, output_path):
