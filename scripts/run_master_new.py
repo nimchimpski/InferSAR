@@ -69,13 +69,13 @@ from datetime import datetime
 project_dir = Path(__file__).parent.parent.absolute()
 sys.path.insert(0, str(project_dir))
 
-from scripts.process.process_helpers import handle_interrupt, read_minmax_from_json
+from scripts.process.process_helpers import handle_interrupt, read_minmax_from_json, print_tiff_info_TSX
 from scripts.process.process_tiffs import create_event_datacube_copernicus, reproject_to_4326_gdal, make_float32_inf, resample_tiff_gdal
 from scripts.process.process_dataarrays import tile_datacube_rxr_inf
 from scripts.train.train_helpers import is_sweep_run, pick_device
 from scripts.train.train_classes import  UnetModel,   Segmentation_training_loop, Sen1Dataset
 from scripts.train.train_functions import  loss_chooser, wandb_initialization, job_type_selector, create_subset
-from scripts.inference_helpers import make_prediction_tiles, stitch_tiles, clean_checkpoint_keys, create_inference_csv, write_df_to_csv
+from scripts.inference_functions import make_prediction_tiles, stitch_tiles, clean_checkpoint_keys, create_inference_csv, write_df_to_csv
 
 start = time.time()
 
@@ -731,6 +731,24 @@ def main(train, test, inference, config):
         #  # MAKE PREDICTION TILES
         with torch.no_grad():
             for imgs, valids, fnames in tqdm(dataloader, desc="Predict"):
+                logger.info(f'images shape: {imgs.shape}, valids shape: {valids.shape}, fnames: {fnames}')
+                logger.info(f"First image filename: {fnames[0]}")
+
+                first_img = imgs[0]
+
+                logger.info(f"First image tensor shape: {first_img.shape}")
+                logger.info(f"First image dtype: {first_img.dtype}")
+                logger.info(f"First image min: {first_img.min().item()}, max: {first_img.max().item()}")
+        
+                # Inspect each channel
+                vv = first_img[0]
+                vh = first_img[1]
+                logger.info(f"VV min/max: {vv.min().item()}/{vv.max().item()}")
+                logger.info(f"VH min/max: {vh.min().item()}/{vh.max().item()}")
+
+
+
+                return
                 imgs   = imgs.to(device)            # [B,2,H,W]
                 logits = model(imgs)
                 probs  = torch.sigmoid(logits).cpu()  # back to CPU for numpy/rasterio

@@ -332,22 +332,26 @@ def pad_tile(tile, expected_size=250, pad_value=0):
 
 def print_tiff_info_TSX( image):
     logger.info(f'+++ logger.info TIFF INFO ---{image.name}')
-    if image:
 
-        with rasterio.open(image) as src:
-            data = src.read()
-            nan_check(data)
-            resolution = src.res  # Or alternatively src.transform.a, src.transform.e
-
-            for i in range(1, src.count + 1):
-                band_data = src.read(i)
-                min, max = min_max_vals(band_data)
-                name = get_band_name(i, src)
-                numvals =  num_band_vals(band_data)
-                logger.info(f"---Band {name}: Min={min}, Max={max}")
-                logger.info(f"---num unique vals = {numvals}")
-                logger.info(f"---CRS: {src.crs}")
-                logger.info(f'---resolution= {src.res}')
+    with rasterio.open(image) as src:
+        data = src.read()
+        nan_check(data)
+        resolution = src.res  # Or alternatively src.transform.a, src.transform.e
+        for i in range(1, src.count + 1):
+            band_data = src.read(i)
+            min, max = min_max_vals(band_data)
+            name = get_band_name(i, src)
+            numvals =  num_band_vals(band_data)
+            logger.info(f"Band count:    {src.count}")
+            logger.info(f"---Band {name}: Min={min}, Max={max}")
+            logger.info(f"---num unique vals = {numvals}")
+            logger.info(f"---CRS: {src.crs}")
+            logger.info(f"Width×Height:  {src.width} × {src.height}")
+            logger.info(f"Transform:     {src.transform}")
+            px, py = src.res
+            logger.info(f"Pixel size:    {px} × {py}")
+            logger.info(f"Data type:     {src.dtypes[0]}")
+            logger.info(f'---resolution= {src.res}')
         
 def check_single_tile(tile):
     with rasterio.open(tile) as src:

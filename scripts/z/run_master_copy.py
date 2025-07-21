@@ -70,7 +70,7 @@ from scripts.process.process_dataarrays import tile_datacube_rxr_inf
 from scripts.train.train_helpers import is_sweep_run, pick_device
 from scripts.train.train_classes import  UnetModel,   Segmentation_training_loop, Sen1Dataset
 from scripts.train.train_functions import  loss_chooser, wandb_initialization, job_type_selector, create_subset
-from scripts.inference_helpers import make_prediction_tiles, stitch_tiles, clean_checkpoint_keys, create_inference_csv, write_df_to_csv
+from scripts.inference_functions import make_prediction_tiles, stitch_tiles, clean_checkpoint_keys, create_inference_csv, write_df_to_csv
 
 start = time.time()
 

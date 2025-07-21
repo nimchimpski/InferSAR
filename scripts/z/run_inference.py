@@ -28,7 +28,7 @@ from scripts.process.process_tiffs import  create_event_datacube_copernicus,repr
 from scripts.process.process_dataarrays import tile_datacube_rxr_inf
 from scripts.process.process_helpers import  print_tiff_info_TSX, check_single_input_filetype, rasterize_kml_rasterio, compute_image_minmax, process_raster_minmax, path_not_exists, read_minmax_from_json, normalize_imagedata_inf, read_raster, write_raster
 from scripts.process.process_helpers import handle_interrupt
-from scripts.inference_helpers import make_prediction_tiles, stitch_tiles, clean_checkpoint_keys
+from scripts.inference_functions import make_prediction_tiles, stitch_tiles, clean_checkpoint_keys
 
 start=time.time()
 
