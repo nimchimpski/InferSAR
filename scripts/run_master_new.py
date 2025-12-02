@@ -90,18 +90,18 @@ signal.signal(signal.SIGINT, handle_interrupt)
 class ProjectPaths:
     """Centralized path management for the flood detection project"""
     
-    def __init__(self, project_dir: Path, image_code: str):
+    def __init__(self, project_dir: Path):
         self.project_dir = project_dir
-        self.image_code = image_code
-        
+        self._image_code = None
         
         # Main working directories
         self.dataset_dir = self.project_dir / "data" /  "4final" / "dataset"
         self.training_dir = self.project_dir / "data" / "4final" / "training"
         self.predictions_dir = self.project_dir / "data" / "4final" / 'predictions'
+        self.test_dir = self.project_dir / "data" / "4final" / "testing"
         
         # Data subdirectories
-        self.images_dir = self.dataset_dir / 'S1HAnd'
+        self.images_dir = self.dataset_dir / 'S1Hand'
         self.labels_dir = self.dataset_dir / 'LabelHand'
         
         # CSV files
@@ -119,13 +119,50 @@ class ProjectPaths:
         
         # Environment file
         self.env_file = self.project_dir / ".env"
+
+    @property
+    def image_code(self) -> str:
+        if self._image_code is None:  
+            predict_input = self.project_dir / "data" / "4final" / "predict_input"
+            # DEFINE PREDICT_INPUT
+            if not predict_input.exists():
+                raise FileNotFoundError(f"Predict input not found: {predict_input}")
+            # FIND THE INPUT IMAGE TO EXTRACT IMAGE CODE
+            input_names = [f for f in predict_input.iterdir() 
+                           if f.is_file() 
+                           and not f.name.startswith('.') 
+                           and f.suffix.lower() in ['.tif', '.tiff']]
+            if input_names:
+                # extract file name
+                splits = input_names[0].stem.split('_')
+                self._image_code = '_'.join(splits[:2])  # ← CACHE IT
+                logger.info(f"Auto-detected image_code: {self._image_code}")
+
+            # OTHERWISE GET IT FROM THE TILE FOLDER NAME
+            else:
+                logger.info(f"No .tif files found in {predict_input}\npresume input pre-tiled")
+                tile_folders = [f for f in predict_input.iterdir()
+                                 if f.is_directory() and "tiles" in f.name.lower()]
+
+                if not tile_folders:
+                    raise FileNotFoundError(f"No input files or tile folders found in {predict_input}")
+                # Extract image code from folder name
+                # e.g., "Ghana_313799_tiles" -> "Ghana_313799"
+                folder_name = tile_folders[0].name
+                self._image_code = folder_name.replace("_tiles", "")
+                logger.info(f"Extracted image_code from pre-tiled folder: {self._image_code}")
+        return self._image_code
+
+ 
+
     
-    def get_inference_paths(self, sensor: str = 'sensor', date: str = 'date', tile_size: int ="0000", threshold: float = 0.5,  output_filename: str = '_name'):
-        """Get inference-specific paths"""
+    def get_inference_paths(self, sensor: str = 'sensor', date: str = 'date', tile_size: int =512, threshold: float = 0.5, output_filename: str = '_name') -> dict:
+        # GRAB OUTPUT_FILENAME
+      
         save_tiles_path = self.predictions_dir / f'{self.image_code}_tiles'
         return {
             'predict_input': self.project_dir / "data" / "4final" / "predict_input",
-            'pred_tiles_dir': self.predictions_dir / f'{self.image_code}_predictions',
+            'pred_tiles_dir': self.predictions_dir / f'{output_filename}_predictions',
             'save_tiles_path': save_tiles_path,
             'extracted_dir': self.predictions_dir / f'{self.image_code}_extracted',
             'file_list': self.predictions_dir / "predict_tile_list.csv",
@@ -183,7 +220,6 @@ class ProjectPaths:
 @click.option('--config', is_flag=True, help='loading from config')
 
 def main(train, test, inference, config):
-
     n = 0
     for i in train, test, inference:
         if i:
@@ -201,7 +237,14 @@ def main(train, test, inference, config):
     elif inference:
         job_type = "inference"
 
-    logger.info(f"train={train}, test={test}, inference={inference}, config =  {config}")
+    if train:
+        logger.info("********** TRAINING MODE **********")
+    elif test:
+        logger.info("********** TESTING MODE **********")
+    elif inference:
+        logger.info("********** INFERENCE MODE **********")
+    
+    logger.info(f"config =  {config}")
 
     device = pick_device()                       
     logger.info(f" Using device: {device}")
@@ -213,11 +256,10 @@ def main(train, test, inference, config):
     
     #......................................................
     # INITIALIZE PATHS
-    project_dir = Path(__file__).resolve().parent.parent
+    # project_dir = Path(__file__).resolve().parent.parent
     logger.info(f"Project directory: {project_dir}")
     
-    # Initialize centralized path management
-    paths = ProjectPaths(project_dir, image_code="0000")
+    paths = ProjectPaths(project_dir=project_dir)
     
     # Validate paths for the current job type
     path_errors = paths.validate_paths(job_type)
@@ -225,7 +267,6 @@ def main(train, test, inference, config):
         for error in path_errors:
             logger.error(error)
         raise FileNotFoundError("Required paths validation failed. See errors above.")
-    
     #......................................................
     # CONFIGURATION PARAMETERS
     dataset_name = "sen1floods11"  # "sen1floods11" or "copernicus_floods"
@@ -240,7 +281,7 @@ def main(train, test, inference, config):
     num_workers = 0 # 8 TODO
     threshold = 0.5  # Default threshold for training
     # Logging and model parameters
-    WandB_online = False
+    WandB_online = True
     LOGSTEPS = 50
     PRETRAINED = True
     in_channels = 2
@@ -256,38 +297,39 @@ def main(train, test, inference, config):
     tile_size = 512
     stride = tile_size
     # Processing flags
-    MAKE_TIFS = 0
-    MAKE_DATAARRAY = 0
-    MAKE_TILES = 0
+    MAKE_TIFS = False
+    MAKE_DATAARRAY = False
+    MAKE_TILES = False
     # Initialize variables
     stitched_image = None  # Will be set later based on mode
 
+    # THIS IS NEEDED FOR MAKE TIFS
+    inference_paths = paths.get_inference_paths(
+        sensor='sensor', 
+        date='date', 
+        tile_size=tile_size, 
+        threshold=threshold,
+        output_filename= '_name'
+    )
     # MODE-SPECIFIC CONFIGURATION
     if inference:
-        input_is_linear = False  # For inference, we assume input is linear
-        output_filename = '_name'  # Will be overridden in config
-        stitched_image = None
+        input_is_linear = False  # NEEDS TO BE EXACT SAME AS TRAINING
         threshold = 0.5
-        inference_paths = paths.get_inference_paths(
-            sensor='sensor', 
-            date='date', 
-            tile_size=tile_size, 
-            threshold=threshold, 
-            output_filename=output_filename
-        )
-        predict_input = inference_paths['predict_input']
+        image_code = paths.image_code
+        logger.info(f"Image code: {image_code}")
         working_dir = paths.predictions_dir
         stitched_image = inference_paths['stitched_image']
-        MAKE_TIFS = 0
-        MAKE_DATAARRAY = 0
-        MAKE_TILES = 0
+
+        # !!!!!!!!!! IF PREDICTION INPUT IS UNTILED DATA, WE NEED TO MAKE TIFS, DATAARRAY AND TILES, USING MULTI-USE FUNCTIONS !!!!!!!!!!
+        MAKE_TIFS = False
+        MAKE_DATAARRAY = False
+        MAKE_TILES = False
         subset_fraction = 1
         batch_size = 1
         shuffle = False
         
         if stitched_image.exists():
-            logger.info(f"---overwriting existing file! : {stitched_image}")
-        logger.info(f'config mode = {config}')
+            logger.info(f"overwriting existing file! : {stitched_image}")
 
     if config:
         if not paths.main_config.exists():
@@ -337,8 +379,8 @@ def main(train, test, inference, config):
     )
     config = wandb.config
     if loss_description == "focal":
-        logger.info(f"---focal_alpha: {wandb.config.get('focal_alpha', 'Not Found')}")
-        logger.info(f"---focal_gamma: {wandb.config.get('focal_gamma', 'Not Found')}")
+        logger.info(f"focal_alpha: {wandb.config.get('focal_alpha', 'Not Found')}")
+        logger.info(f"focal_gamma: {wandb.config.get('focal_gamma', 'Not Found')}")
         loss_desc = f"{loss_description}_{config.focal_alpha}_{config.focal_gamma}" 
     elif loss_description == "bce_dice":
         loss_desc = f"{loss_description}_{config.bce_weight}"
@@ -369,7 +411,6 @@ def main(train, test, inference, config):
         training_paths = paths.get_training_paths()
         save_tiles_path = training_paths['save_tiles_path']
     elif inference:
-        inference_paths = paths.get_inference_paths()
         file_list = inference_paths['file_list']
         save_tiles_path = inference_paths['save_tiles_path']
         extracted = inference_paths['extracted_dir']
@@ -387,6 +428,7 @@ def main(train, test, inference, config):
         logger.info('EXTRACTING VV AND VH CHANNELS')
     
         # Filter for .tif files specifically, ignoring system files
+        predict_input = inference_paths['predict_input']
         valid_files = [f for f in predict_input.iterdir() 
                        if f.is_file() 
                        and not f.name.startswith('.') 
@@ -444,9 +486,9 @@ def main(train, test, inference, config):
         logger.info(f"--- VH image: {vh_image}")
     
         # Extract image code for later use
-        splits = image.stem.split('_')
-        image_code = '_'.join(splits[:2])
-        logger.info(f"--- Image code: {image_code}")
+        # splits = image.stem.split('_')
+        # image_code = '_'.join(splits[:2])
+        # logger.info(f"--- Image code: {image_code}")
 
         
 
@@ -560,8 +602,8 @@ def main(train, test, inference, config):
         return
 
     logger.info(" Creating data loaders")
-    logger.info(f"---save_tiles_path: {save_tiles_path}")
-    logger.info(f"---file_list: {file_list}")
+    logger.info(f"save_tiles_path: {save_tiles_path}")
+    logger.info(f"file_list: {file_list}")
     logger.info(f'input_is_linear: {input_is_linear}')
     logger.info(f'working_dir ' f'{working_dir}')
 # ////////////////////////////////////////////////////////////
@@ -627,7 +669,15 @@ def main(train, test, inference, config):
         test_dl = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, persistent_workers=persistent_workers)
         
     elif inference:
-        logger.info(">>>>>>>>>Creating inference dataloader")
+        logger.info(">>>>>>>>> CREATING INFERENCE DATALOADER")
+        # CHECK ARGS
+        logger.info(f'working_dir: {working_dir}')
+        logger.info(f'images_dir: {paths.images_dir}')
+        logger.info(f'labels_dir: {paths.labels_dir}')
+        logger.info(f'file_list: {file_list}')
+        logger.info(f'image_code: {paths.image_code}')
+
+        
         # Inference dataset
         inference_dataset = Sen1Dataset(
             job_type="inference",
@@ -635,7 +685,7 @@ def main(train, test, inference, config):
             images_dir=paths.images_dir,
             labels_dir=paths.labels_dir,
             csv_path=file_list,
-            image_code=paths.image_code,
+            image_code=image_code,
             input_is_linear=input_is_linear,
             db_min=db_min,
             db_max=db_max)
@@ -720,15 +770,16 @@ def main(train, test, inference, config):
             trainer.test(model=training_loop, dataloaders=test_dl)
 
     elif inference:
-        # DEFINE THE PREDICTION TILES FOLDER
+
         pred_tiles_dir = inference_paths['pred_tiles_dir']
         # DELETE THE PREDICTION FOLDER IF IT EXISTS
         if pred_tiles_dir.exists():
-            logger.info(f"--- Deleting existing predictions folder: {pred_tiles_dir}")
+            logger.info(f"Deleting existing predictions folder: {pred_tiles_dir}")
             shutil.rmtree(pred_tiles_dir)
         pred_tiles_dir.mkdir(exist_ok=True)
 
         #  # MAKE PREDICTION TILES
+        logger.info(">>>>>>>> MAKE PREDICTION TILES")
         with torch.no_grad():
             for imgs, valids, fnames in tqdm(dataloader, desc="Predict"):
                 logger.info(f'images shape: {imgs.shape}, valids shape: {valids.shape}, fnames: {fnames}')
@@ -748,7 +799,7 @@ def main(train, test, inference, config):
 
 
 
-                return
+                
                 imgs   = imgs.to(device)            # [B,2,H,W]
                 logits = model(imgs)
                 probs  = torch.sigmoid(logits).cpu()  # back to CPU for numpy/rasterio
@@ -766,8 +817,8 @@ def main(train, test, inference, config):
                     with rasterio.open(dst_path, "w", **profile) as dst:
                         dst.write(out.astype("float32"), 1)  
 
-            ims_list = [(pred_tiles_dir.glob("*.tif"))]
-            if len(ims_list) > 1:
+            ims_list = list(pred_tiles_dir.glob("*.tif"))
+            if len(ims_list) > 0:
                 # Load metadata for stitching
                 if not metadata_path.exists():
                     logger.error(f"Metadata file not found: {metadata_path}")
