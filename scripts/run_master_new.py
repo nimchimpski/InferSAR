@@ -161,21 +161,21 @@ class ProjectPaths:
     def get_inference_paths(self, sensor: str = 'sensor', date: str = 'date', tile_size: int =512, threshold: float = 0.5, output_filename: str = '_name') -> dict:
         # GRAB OUTPUT_FILENAME
       
-        save_tiles_path = self.predictions_dir / f'{self.image_code}_tiles'
+        image_tiles_path = self.predictions_dir / f'{self.image_code}_tiles'
         return {
             'predict_input': self.project_dir / "data" / "4final" / "predict_input",
             'pred_tiles_dir': self.predictions_dir / f'{output_filename}_predictions',
-            'save_tiles_path': save_tiles_path,
+            'image_tiles_path': image_tiles_path,
             'extracted_dir': self.predictions_dir / f'{self.image_code}_extracted',
             'file_list': self.predictions_dir / "predict_tile_list.csv",
             'stitched_image': self.predictions_dir / f'{sensor}_{self.image_code}_{date}_{tile_size}_{threshold}_{output_filename}_WATER_AI.tif',
-            'metadata_path': save_tiles_path / 'tile_metadata.json'
+            'metadata_path': image_tiles_path / 'tile_metadata.json'
         }
     
     def get_training_paths(self):
         """Get training/testing specific paths"""
         return {
-            'save_tiles_path': self.dataset_dir,
+            'image_tiles_path': self.dataset_dir,
             'metadata_path': self.dataset_dir / 'tile_metadata_pth.json'
         }
     
@@ -220,6 +220,8 @@ class ProjectPaths:
 @click.option('--test', is_flag=True, help="Test the model")
 @click.option('--inference', is_flag=True, help="Run inference on a copernicus S1 image")
 @click.option('--config', is_flag=True, help='loading from config')
+
+# //////////////////   MAIN   ///////////////////////
 
 def main(train, test, inference, config):
     n = 0
@@ -304,7 +306,7 @@ def main(train, test, inference, config):
     # Initialize variables
     stitched_image = None  # Will be set later based on mode
 
-    # THIS IS NEEDED FOR MAKE TIFS
+    # THIS IS NEEDED FOR MAKE TIFS TODO WEIRD
     inference_paths = paths.get_inference_paths(
         sensor='sensor', 
         date='date', 
@@ -315,6 +317,16 @@ def main(train, test, inference, config):
 
     # MODE-SPECIFIC CONFIGURATION
     if inference:
+        print('='*50 + '\nCHECK THE PATHS ARE CORRECT FOR YOUR SETUP\n')
+        for p in inference_paths:
+            path_value = inference_paths[p]
+            display_path = path_value.relative_to(project_dir / 'data' / '4final') if isinstance(path_value, Path) else path_value
+
+            print(f'{p}: {display_path}\n')
+        print('='*50 + '\n')
+        breakpoint()
+
+        
         input_is_linear = False  # NEEDS TO BE EXACT SAME AS TRAINING
         threshold = 0.5
         image_code = paths.image_code
@@ -403,14 +415,14 @@ def main(train, test, inference, config):
     if train:
         file_list = paths.train_csv
         training_paths = paths.get_training_paths()
-        save_tiles_path = training_paths['save_tiles_path']
+        image_tiles_path = training_paths['image_tiles_path']
     elif test:
         file_list = paths.test_csv
         training_paths = paths.get_training_paths()
-        save_tiles_path = training_paths['save_tiles_path']
+        image_tiles_path = training_paths['image_tiles_path']
     elif inference:
         file_list = inference_paths['file_list']
-        save_tiles_path = inference_paths['save_tiles_path']
+        image_tiles_path = inference_paths['image_tiles_path']
         extracted = inference_paths['extracted_dir']
         metadata_path = inference_paths['metadata_path']
     logger.info(f"extracted: {extracted}")
@@ -545,19 +557,19 @@ def main(train, test, inference, config):
         if cube is None:
             logger.error("Cannot create tiles: no data cube available")
             return
-        if save_tiles_path.exists():
-            logger.info(f"--- Deleting existing inference tiles folder: {save_tiles_path}")
-            shutil.rmtree(save_tiles_path)
-        save_tiles_path.mkdir(exist_ok=True, parents=True)
+        if image_tiles_path.exists():
+            logger.info(f"--- Deleting existing inference tiles folder: {image_tiles_path}")
+            shutil.rmtree(image_tiles_path)
+        image_tiles_path.mkdir(exist_ok=True, parents=True)
         extracted.mkdir(exist_ok=True, parents=True)
         # TILE DATACUBE
         #  meteada is a dict used for stcihing later
-        tiles, metadata = tile_datacube_rxr_inf(cube, save_tiles_path, tile_size=tile_size, stride=stride, percent_non_flood=0, inference = inference) 
+        tiles, metadata = tile_datacube_rxr_inf(cube, image_tiles_path, tile_size=tile_size, stride=stride, percent_non_flood=0, inference = inference) 
 
         with open(metadata_path, "w") as f:
             json.dump(metadata, f, indent=4)
         logger.info(f"---Saved {len(metadata)} tile_metadata to {metadata_path}")
-        logger.info(f"{len(tiles)} tiles saved to {save_tiles_path}")
+        logger.info(f"{len(tiles)} tiles saved to {image_tiles_path}")
 
         # CREATE CSV FOR INFERENCE DATALOADER USING THE METADATA
         inference_list_dataframe = create_inference_csv(metadata)
@@ -650,12 +662,7 @@ def main(train, test, inference, config):
         
     elif inference:
         logger.debug(">>>>>>>>> CREATING INFERENCE DATALOADER")
-        # CHECK ARGS
-        logger.debug(f'working_dir: {working_dir}')
-        logger.debug(f'images_dir: {paths.images_dir}')
-        logger.debug(f'labels_dir: {paths.labels_dir}')
-        logger.debug(f'file_list: {file_list}')
-        logger.debug(f'image_code: {paths.image_code}')
+
 
         
         # Inference dataset
@@ -785,7 +792,7 @@ def main(train, test, inference, config):
                     out = preds[b, 0].numpy()                 # 2-D
                     out[~valids[b, 0].numpy().astype(bool)] = 0  # mask invalid px
 
-                    src_path = save_tiles_path / name
+                    src_path = image_tiles_path / name
                     with rasterio.open(src_path) as src:
                         profile = src.profile
                     profile.update(dtype="float32", count=1)

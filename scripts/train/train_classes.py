@@ -269,12 +269,20 @@ class Sen1Dataset(Dataset):
             tile_dir = images_dir
             mask_dir = labels_dir
 
+        
         # 1) parse the CSV
+
         with csv_path.open() as f:
             reader = csv.reader(f)
-            next(reader, None)  # skip header row
+            # Skip header only for train/val/test (they have headers)
+            if job_type in ("train", "val", "test"):
+                next(reader, None)  # Skip header row
+            # Inference CSV has no header, so don't skip
             for row in reader:
-                img_name = row[0]
+                if not row:
+                    continue  # skip empty rows
+                img_name = row[0].strip()
+                # img_name = row[0].strip()
                 logger.info(f"/////Processing image: {img_name}")
                 self.img_paths.append(tile_dir / img_name)
                 self.fnames.append(img_name)
@@ -283,6 +291,8 @@ class Sen1Dataset(Dataset):
                 if job_type in ("train","val", "test"):
                     mask_name = row[1]
                     self.mask_paths.append(mask_dir / mask_name)
+            print('\nXXXXXXXXXXXXXXXXXXXXXXXXXXXX\n')
+
         logger.info(f"/////Found {len(self.img_paths)} images in {csv_path}")
         logger.info(f'///imgs_paths: {self.img_paths}   ')
         # sanity check

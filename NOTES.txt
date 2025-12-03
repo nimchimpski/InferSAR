@@ -1,1 +1,18 @@
 -There are google keep notes and sketches
+
+
+## CSV Format
+
+### Training/Testing
+```csv
+tile_001.tif,mask_001.tif
+tile_002.tif,mask_002.tif
+```
+
+### Inference
+```csv
+tile_001.tif
+tile_002.tif
+```
+
+**No headers required.** Column order is fixed: image first, mask second (if applicable).
