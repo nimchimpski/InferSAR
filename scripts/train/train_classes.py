@@ -265,7 +265,6 @@ class Sen1Dataset(Dataset):
         self.fnames:     List[str]  = []
         if job_type == "inference":
             tile_dir = working_dir / f"{image_code}_tiles"
-            mask_dir = working_dir / f"{image_code}_masks"
         else:
             tile_dir = images_dir
             mask_dir = labels_dir

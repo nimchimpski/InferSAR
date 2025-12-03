@@ -79,6 +79,7 @@ from scripts.inference_functions import make_prediction_tiles, stitch_tiles, cle
 
 start = time.time()
 
+
 logging.getLogger('scripts.process.process_helpers').setLevel(logging.INFO)
 logging.getLogger('scripts.train.train_classess').setLevel(logging.INFO)
 
@@ -89,7 +90,7 @@ signal.signal(signal.SIGINT, handle_interrupt)
 
 class ProjectPaths:
     """Centralized path management for the flood detection project"""
-    
+
     def __init__(self, project_dir: Path):
         self.project_dir = project_dir
         self._image_code = None
@@ -136,16 +137,17 @@ class ProjectPaths:
                 # extract file name
                 splits = input_names[0].stem.split('_')
                 self._image_code = '_'.join(splits[:2])  # ← CACHE IT
-                logger.info(f"Auto-detected image_code: {self._image_code}")
+     
 
             # OTHERWISE GET IT FROM THE TILE FOLDER NAME
             else:
-                logger.info(f"No .tif files found in {predict_input}\npresume input pre-tiled")
-                tile_folders = [f for f in predict_input.iterdir()
-                                 if f.is_directory() and "tiles" in f.name.lower()]
+                logger.info(f"No '.tif' imput image found in {predict_input}\nso looking  in tile folder name in {self.predictions_dir} for image_code...")
+   
+
+                tile_folders = [f for f in self.predictions_dir.iterdir() if not f.name.startswith('.') and  f.is_dir() and "tiles" in f.name.lower()]
 
                 if not tile_folders:
-                    raise FileNotFoundError(f"No input files or tile folders found in {predict_input}")
+                    raise FileNotFoundError(f"No input files or tile folders found in {self.predictions_dir}")
                 # Extract image code from folder name
                 # e.g., "Ghana_313799_tiles" -> "Ghana_313799"
                 folder_name = tile_folders[0].name
@@ -238,11 +240,11 @@ def main(train, test, inference, config):
         job_type = "inference"
 
     if train:
-        logger.info("********** TRAINING MODE **********")
+        print("********** TRAINING MODE **********")
     elif test:
-        logger.info("********** TESTING MODE **********")
+        print("********** TESTING MODE **********")
     elif inference:
-        logger.info("********** INFERENCE MODE **********")
+        print("\n" + "="*20 + "INFERENCE MODE" + "="*20 + "\nFOR PRE TILED INPUT, CSV FOLDER MUST BE NAMED 'PREDICT_TILE_LIST\nTILE FOLDER MUST BE NAMED <image_code>_tiles\n" + "="*50 + "\n")
     
     logger.info(f"config =  {config}")
 
@@ -260,7 +262,6 @@ def main(train, test, inference, config):
     logger.info(f"Project directory: {project_dir}")
     
     paths = ProjectPaths(project_dir=project_dir)
-    
     # Validate paths for the current job type
     path_errors = paths.validate_paths(job_type)
     if path_errors:
@@ -311,12 +312,13 @@ def main(train, test, inference, config):
         threshold=threshold,
         output_filename= '_name'
     )
+
     # MODE-SPECIFIC CONFIGURATION
     if inference:
         input_is_linear = False  # NEEDS TO BE EXACT SAME AS TRAINING
         threshold = 0.5
         image_code = paths.image_code
-        logger.info(f"Image code: {image_code}")
+        # logger.info(f"Image code: {image_code}")
         working_dir = paths.predictions_dir
         stitched_image = inference_paths['stitched_image']
 
@@ -342,10 +344,6 @@ def main(train, test, inference, config):
         input_file = Path(config_data['input_file'])
         output_folder = Path(config_data['output_folder'])
         output_filename = Path(config_data['output_filename'])
-
-#/////////////////////////////////////////////////////////////////////////////////////////////
-
-#/////////////////////////////////////////////////////////////////////////////////////////////
 
     persistent_workers = num_workers > 0
 
@@ -415,9 +413,7 @@ def main(train, test, inference, config):
         save_tiles_path = inference_paths['save_tiles_path']
         extracted = inference_paths['extracted_dir']
         metadata_path = inference_paths['metadata_path']
-    logger.info(f"++++++extracted: {extracted}")
-
-    
+    logger.info(f"extracted: {extracted}")
 
     # Only delete and recreate folders for inference mode
     logger.info(f' MAKE_TIFS = {MAKE_TIFS}, MAKE_DATAARRAY = {MAKE_DATAARRAY}, MAKE_TILES = {MAKE_TILES}   ')
@@ -488,11 +484,7 @@ def main(train, test, inference, config):
         # Extract image code for later use
         # splits = image.stem.split('_')
         # image_code = '_'.join(splits[:2])
-        # logger.info(f"--- Image code: {image_code}")
-
-        
-
-        
+        # logger.info(f"--- Image code: {image_code}")    
 
         if True:
             pass
@@ -548,8 +540,6 @@ def main(train, test, inference, config):
         if cube is None:
             raise FileNotFoundError(f"No data cube found in {extracted}")
 
-
-
     if MAKE_TILES:
         cube = next(extracted.rglob("*.nc"), None)
         if cube is None:
@@ -569,14 +559,10 @@ def main(train, test, inference, config):
         logger.info(f"---Saved {len(metadata)} tile_metadata to {metadata_path}")
         logger.info(f"{len(tiles)} tiles saved to {save_tiles_path}")
 
-
-
         # CREATE CSV FOR INFERENCE DATALOADER USING THE METADATA
         inference_list_dataframe = create_inference_csv(metadata)
         write_df_to_csv(inference_list_dataframe, file_list)
 
-
-        
     # VERIFY CSV EXISTS OR WAS MADE  
     if not file_list.exists():
         logger.error(f"Failed to create inference CSV file: {file_list}")
@@ -600,12 +586,6 @@ def main(train, test, inference, config):
     except Exception as e:
         logger.error(f"Failed to load model state dict: {e}")
         return
-
-    logger.info(" Creating data loaders")
-    logger.info(f"save_tiles_path: {save_tiles_path}")
-    logger.info(f"file_list: {file_list}")
-    logger.info(f'input_is_linear: {input_is_linear}')
-    logger.info(f'working_dir ' f'{working_dir}')
 # ////////////////////////////////////////////////////////////
 
     # CREATE DATALOADERS BASED ON JOB TYPE
@@ -669,13 +649,13 @@ def main(train, test, inference, config):
         test_dl = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, persistent_workers=persistent_workers)
         
     elif inference:
-        logger.info(">>>>>>>>> CREATING INFERENCE DATALOADER")
+        logger.debug(">>>>>>>>> CREATING INFERENCE DATALOADER")
         # CHECK ARGS
-        logger.info(f'working_dir: {working_dir}')
-        logger.info(f'images_dir: {paths.images_dir}')
-        logger.info(f'labels_dir: {paths.labels_dir}')
-        logger.info(f'file_list: {file_list}')
-        logger.info(f'image_code: {paths.image_code}')
+        logger.debug(f'working_dir: {working_dir}')
+        logger.debug(f'images_dir: {paths.images_dir}')
+        logger.debug(f'labels_dir: {paths.labels_dir}')
+        logger.debug(f'file_list: {file_list}')
+        logger.debug(f'image_code: {paths.image_code}')
 
         
         # Inference dataset
@@ -796,9 +776,6 @@ def main(train, test, inference, config):
                 vh = first_img[1]
                 logger.info(f"VV min/max: {vv.min().item()}/{vv.max().item()}")
                 logger.info(f"VH min/max: {vh.min().item()}/{vh.max().item()}")
-
-
-
                 
                 imgs   = imgs.to(device)            # [B,2,H,W]
                 logits = model(imgs)
@@ -849,5 +826,4 @@ def main(train, test, inference, config):
     logger.info(f"Time taken: {((end - start) / 60):.2f} minutes")
 
 if __name__ == '__main__':
-    logger.info("LOGGING OK IN MAIN")
     main()
