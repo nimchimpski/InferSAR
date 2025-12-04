@@ -66,11 +66,11 @@ from datetime import datetime
 # .............................................................
 
 # Add project directory to Python path for imports
-project_dir = Path(__file__).parent.parent.absolute()
-sys.path.insert(0, str(project_dir))
+project_path = Path(__file__).parent.parent.absolute()
+sys.path.insert(0, str(project_path))
 
 from scripts.process.process_helpers import handle_interrupt, read_minmax_from_json, print_tiff_info_TSX
-from scripts.process.process_tiffs import create_event_datacube_copernicus, reproject_to_4326_gdal, make_float32_inf, resample_tiff_gdal
+from scripts.process.process_tiffs import create_event_datacube_copernicus, reproject_to_4326_gdal, make_float32_inf, resample_tiff_gdal, tile_geotiff_directly
 from scripts.process.process_dataarrays import tile_datacube_rxr_inf
 from scripts.train.train_helpers import is_sweep_run, pick_device
 from scripts.train.train_classes import  UnetModel,   Segmentation_training_loop, Sen1Dataset
@@ -91,40 +91,40 @@ signal.signal(signal.SIGINT, handle_interrupt)
 class ProjectPaths:
     """Centralized path management for the flood detection project"""
 
-    def __init__(self, project_dir: Path):
-        self.project_dir = project_dir
+    def __init__(self, project_path: Path):
+        self.project_path = project_path
         self._image_code = None
         
         # Main working directories
-        self.dataset_dir = self.project_dir / "data" /  "4final" / "dataset"
-        self.training_dir = self.project_dir / "data" / "4final" / "training"
-        self.predictions_dir = self.project_dir / "data" / "4final" / 'predictions'
-        self.test_dir = self.project_dir / "data" / "4final" / "testing"
+        self.dataset_path = self.project_path / "data" /  "4final" / "dataset"
+        self.training_path = self.project_path / "data" / "4final" / "training"
+        self.predictions_path = self.project_path / "data" / "4final" / 'predictions'
+        self.test_path = self.project_path / "data" / "4final" / "testing"
         
         # Data subdirectories
-        self.images_dir = self.dataset_dir / 'S1Hand'
-        self.labels_dir = self.dataset_dir / 'LabelHand'
+        self.images_path = self.dataset_path / 'S1Hand'
+        self.labels_path = self.dataset_path / 'LabelHand'
         
         # CSV files
-        self.train_csv = self.dataset_dir / "flood_train_data.csv"
-        self.val_csv = self.dataset_dir / "flood_valid_data.csv"
-        self.test_csv = self.dataset_dir / "flood_test_data.csv"
+        self.train_csv = self.dataset_path / "flood_train_data.csv"
+        self.val_csv = self.dataset_path / "flood_valid_data.csv"
+        self.test_csv = self.dataset_path / "flood_test_data.csv"
         
         # Checkpoint directories (consolidated)
-        self.ckpt_input_dir = project_dir / "checkpoints" / 'ckpt_INPUT'
-        self.ckpt_training_dir = self.project_dir / "checkpoints" / "ckpt_training"
+        self.ckpt_input_path = project_path / "checkpoints" / 'ckpt_INPUT'
+        self.ckpt_training_path = self.project_path / "checkpoints" / "ckpt_training"
         
         # Config files
-        self.main_config = project_dir / "configs" / "floodaiv2_config.yaml"
-        self.minmax_config = project_dir / "configs" / "global_minmax_INPUT" / "global_minmax.json"
+        self.main_config = project_path / "configs" / "floodaiv2_config.yaml"
+        self.minmax_config = project_path / "configs" / "global_minmax_INPUT" / "global_minmax.json"
         
         # Environment file
-        self.env_file = self.project_dir / ".env"
+        self.env_file = self.project_path / ".env"
 
     @property
     def image_code(self) -> str:
         if self._image_code is None:  
-            predict_input = self.project_dir / "data" / "4final" / "predict_input"
+            predict_input = self.project_path / "data" / "4final" / "predict_input"
             # DEFINE PREDICT_INPUT
             if not predict_input.exists():
                 raise FileNotFoundError(f"Predict input not found: {predict_input}")
@@ -136,18 +136,20 @@ class ProjectPaths:
             if input_names:
                 # extract file name
                 splits = input_names[0].stem.split('_')
-                self._image_code = '_'.join(splits[:2])  # ← CACHE IT
+                raw_code = '_'.join(splits[:2])
+                # Sanitize: replace colons with hyphens or underscores 
+                self._image_code = raw_code.replace(':', '-')  # ← ADD THIS   
      
 
             # OTHERWISE GET IT FROM THE TILE FOLDER NAME
             else:
-                logger.info(f"No '.tif' imput image found in {predict_input}\nso looking  in tile folder name in {self.predictions_dir} for image_code...")
+                logger.info(f"No '.tif' imput image found in {predict_input}\nso looking  in tile folder name in {self.predictions_path} for image_code...")
    
 
-                tile_folders = [f for f in self.predictions_dir.iterdir() if not f.name.startswith('.') and  f.is_dir() and "tiles" in f.name.lower()]
+                tile_folders = [f for f in self.predictions_path.iterdir() if not f.name.startswith('.') and  f.is_dir() and "tiles" in f.name.lower()]
 
                 if not tile_folders:
-                    raise FileNotFoundError(f"No input files or tile folders found in {self.predictions_dir}")
+                    raise FileNotFoundError(f"No input files or tile folders found in {self.predictions_path}")
                 # Extract image code from folder name
                 # e.g., "Ghana_313799_tiles" -> "Ghana_313799"
                 folder_name = tile_folders[0].name
@@ -161,22 +163,22 @@ class ProjectPaths:
     def get_inference_paths(self, sensor: str = 'sensor', date: str = 'date', tile_size: int =512, threshold: float = 0.5, output_filename: str = '_name') -> dict:
         # GRAB OUTPUT_FILENAME
       
-        image_tiles_path = self.predictions_dir / f'{self.image_code}_tiles'
+        image_tiles_path = self.predictions_path / f'{self.image_code}_tiles'
         return {
-            'predict_input': self.project_dir / "data" / "4final" / "predict_input",
-            'pred_tiles_dir': self.predictions_dir / f'{output_filename}_predictions',
+            'predict_input_path': self.project_path / "data" / "4final" / "predict_input",
+            'pred_tiles_path': self.predictions_path / f'{output_filename}_predictions',
             'image_tiles_path': image_tiles_path,
-            'extracted_dir': self.predictions_dir / f'{self.image_code}_extracted',
-            'file_list': self.predictions_dir / "predict_tile_list.csv",
-            'stitched_image': self.predictions_dir / f'{sensor}_{self.image_code}_{date}_{tile_size}_{threshold}_{output_filename}_WATER_AI.tif',
+            'extracted_path': self.predictions_path / f'{self.image_code}_extracted',
+            'file_list': self.predictions_path / "predict_tile_list.csv",
+            'stitched_image': self.predictions_path / f'{sensor}_{self.image_code}_{date}_{tile_size}_{threshold}_{output_filename}_WATER_AI.tif',
             'metadata_path': image_tiles_path / 'tile_metadata.json'
         }
     
     def get_training_paths(self):
         """Get training/testing specific paths"""
         return {
-            'image_tiles_path': self.dataset_dir,
-            'metadata_path': self.dataset_dir / 'tile_metadata_pth.json'
+            'image_tiles_path': self.dataset_path,
+            'metadata_path': self.dataset_path / 'tile_metadata_pth.json'
         }
     
     def validate_paths(self, job_type: str):
@@ -185,9 +187,9 @@ class ProjectPaths:
         required_paths = []
         if job_type in ('train', 'test'):
             required_paths = [
-                (self.dataset_dir, "Dataset directory"),
-                (self.images_dir, "Images directory"),
-                (self.labels_dir, "Labels directory"),
+                (self.dataset_path, "Dataset directory"),
+                (self.images_path, "Images directory"),
+                (self.labels_path, "Labels directory"),
             ]
             
             if job_type == 'train':
@@ -203,15 +205,15 @@ class ProjectPaths:
             pass
             
         # Always check checkpoint folder
-        required_paths.append((self.ckpt_input_dir, "Checkpoint input directory"))
+        required_paths.append((self.ckpt_input_path, "Checkpoint input directory"))
         
         for path, description in required_paths:
             if not path.exists():
                 errors.append(f"{description} not found: {path}")
         
         # Check for checkpoint files
-        if not any(self.ckpt_input_dir.rglob("*.ckpt")):
-            errors.append(f"No checkpoint files found in: {self.ckpt_input_dir}")
+        if not any(self.ckpt_input_path.rglob("*.ckpt")):
+            errors.append(f"No checkpoint files found in: {self.ckpt_input_path}")
             
         return errors
 
@@ -229,24 +231,20 @@ def main(train, test, inference, config):
         if i:
             n += 1
     if n > 1 or n == 0:
-        print("********************«***************\nYou must  specify ONE of --train, --test or --inference.\n************************************")
+        print("==========\nYOU MUST  SPECIFY ONE OF --TRAIN, --TEST OR --INFERENCE.\n==========")
         return
 
     if  test:
-        logger.info(' ARE YOU TESTING THE CORRECT CKPT? <<<')
-    if train:
-        job_type = "train" 
-    elif test:
         job_type =  "test"
+        print("========== TESTING MODE ==========")
+        logger.info(' ARE YOU TESTING THE CORRECT CKPT? <<<')
+    elif train:
+        job_type = "train" 
+        print("========== TRAINING MODE ==========")
     elif inference:
         job_type = "inference"
-
-    if train:
-        print("********** TRAINING MODE **********")
-    elif test:
-        print("********** TESTING MODE **********")
-    elif inference:
-        print("\n" + "="*20 + "INFERENCE MODE" + "="*20 + "\nFOR PRE TILED INPUT, CSV FOLDER MUST BE NAMED 'PREDICT_TILE_LIST\nTILE FOLDER MUST BE NAMED <image_code>_tiles\n" + "="*50 + "\n")
+        print("\n" + "="*20 + "INFERENCE MODE" + "="*20 )
+        logger.info("\nNEEDS TO 'MAKE TIFFS' TO ENABLE NORMALISATION. WILL NOT MAKE DATACUBE. TILE DIRECTLY FROM THE NORAMLISED TIFS.\n" + "="*50 + "\n")
     
     logger.info(f"config =  {config}")
 
@@ -260,10 +258,10 @@ def main(train, test, inference, config):
     
     #......................................................
     # INITIALIZE PATHS
-    # project_dir = Path(__file__).resolve().parent.parent
-    logger.info(f"Project directory: {project_dir}")
+    # project_path = Path(__file__).resolve().parent.parent
+    logger.info(f"Project directory: {project_path}")
     
-    paths = ProjectPaths(project_dir=project_dir)
+    paths = ProjectPaths(project_path=project_path)
     # Validate paths for the current job type
     path_errors = paths.validate_paths(job_type)
     if path_errors:
@@ -274,6 +272,7 @@ def main(train, test, inference, config):
     # CONFIGURATION PARAMETERS
     dataset_name = "sen1floods11"  # "sen1floods11" or "copernicus_floods"
     run_name = "_"
+    SINGLE_INPUT = False  # True for VV+VH input, False for single band
     input_is_linear = False   # True for copernicus direct downloads, False for Sen1floods11
     # Training parameters
     subset_fraction = 1
@@ -299,49 +298,50 @@ def main(train, test, inference, config):
     db_max = 0.0
     tile_size = 512
     stride = tile_size
-    # Processing flags
-    MAKE_TIFS = False
-    MAKE_DATAARRAY = False
-    MAKE_TILES = False
+    # Processing flags - default to False, set to True in specific modes
+    MAKE_TIFS = None # INFERENCE NEEDS THIS
+    MAKE_DATAARRAY = None # INFERENCE DOES NOT NEED THIS
+    MAKE_TILES = None # INFERENCE NEEDS THIS
     # Initialize variables
     stitched_image = None  # Will be set later based on mode
 
-    # THIS IS NEEDED FOR MAKE TIFS TODO WEIRD
-    inference_paths = paths.get_inference_paths(
-        sensor='sensor', 
-        date='date', 
-        tile_size=tile_size, 
-        threshold=threshold,
-        output_filename= '_name'
-    )
+
 
     # MODE-SPECIFIC CONFIGURATION
     if inference:
-        print('='*50 + '\nCHECK THE PATHS ARE CORRECT FOR YOUR SETUP\n')
-        for p in inference_paths:
-            path_value = inference_paths[p]
-            display_path = path_value.relative_to(project_dir / 'data' / '4final') if isinstance(path_value, Path) else path_value
-
-            print(f'{p}: {display_path}\n')
-        print('='*50 + '\n')
-        breakpoint()
-
-        
-        input_is_linear = False  # NEEDS TO BE EXACT SAME AS TRAINING
-        threshold = 0.5
-        image_code = paths.image_code
-        # logger.info(f"Image code: {image_code}")
-        working_dir = paths.predictions_dir
-        stitched_image = inference_paths['stitched_image']
-
-        # !!!!!!!!!! IF PREDICTION INPUT IS UNTILED DATA, WE NEED TO MAKE TIFS, DATAARRAY AND TILES, USING MULTI-USE FUNCTIONS !!!!!!!!!!
-        MAKE_TIFS = False
-        MAKE_DATAARRAY = False
-        MAKE_TILES = False
+        # DO NOT CHANGE THESE 
+        MAKE_TIFS = True
+        MAKE_TILES = True
         subset_fraction = 1
         batch_size = 1
         shuffle = False
-        
+        # DEFINE INFERENCE PATHS
+        inference_paths = paths.get_inference_paths(
+            sensor='sensor', 
+            date='date', 
+            tile_size=tile_size, 
+            threshold=threshold,
+            output_filename= '_name'
+        )
+        file_list = inference_paths['file_list']
+        image_tiles_path = inference_paths['image_tiles_path']
+        extracted = inference_paths['extracted_path']
+        metadata_path = inference_paths['metadata_path']
+        print('\n' + '='*50 + '\nCHECK THESE PATHS ARE CORRECT FOR YOUR SETUP')
+        for p in inference_paths:
+            path_value = inference_paths[p]
+            display_path = path_value.relative_to(project_path / 'data' / '4final') if isinstance(path_value, Path) else path_value
+            print(f'\n{p}: {display_path}')
+        print('='*50)
+
+        input_is_linear = True  # NEEDS TO BE EXACT SAME AS TRAINING. S1 COPERNICUS IS LINEAR, s1floods11 IS NOT
+        threshold = 0.5
+        image_code = paths.image_code
+        logger.info(f"Image code: {image_code}")
+    
+        working_path = paths.predictions_path
+        stitched_image = inference_paths['stitched_image']
+
         if stitched_image.exists():
             logger.info(f"overwriting existing file! : {stitched_image}")
 
@@ -384,7 +384,7 @@ def main(train, test, inference, config):
         "max_epoch": max_epoch,
     }
     wandb_logger = wandb_initialization(
-        job_type, paths.project_dir, project, dataset_name, run_name,
+        job_type, paths.project_path, project, dataset_name, run_name,
         paths.train_csv, paths.val_csv, paths.test_csv, wandb_config, WandB_online
     )
     config = wandb.config
@@ -406,9 +406,9 @@ def main(train, test, inference, config):
     
     #........................................................
     # CHECKPOINT AND PATH SETUP
-    ckpt = next(paths.ckpt_input_dir.rglob("*.ckpt"), None)
+    ckpt = next(paths.ckpt_input_path.rglob("*.ckpt"), None)
     if ckpt is None:
-        raise FileNotFoundError(f"No checkpoint found in {paths.ckpt_input_dir}")
+        raise FileNotFoundError(f"No checkpoint found in {paths.ckpt_input_path}")
     
 # ##################################################################
     #########    TRAIN / TEST - CREATE DATA LOADERS    #########
@@ -420,12 +420,7 @@ def main(train, test, inference, config):
         file_list = paths.test_csv
         training_paths = paths.get_training_paths()
         image_tiles_path = training_paths['image_tiles_path']
-    elif inference:
-        file_list = inference_paths['file_list']
-        image_tiles_path = inference_paths['image_tiles_path']
-        extracted = inference_paths['extracted_dir']
-        metadata_path = inference_paths['metadata_path']
-    logger.info(f"extracted: {extracted}")
+
 
     # Only delete and recreate folders for inference mode
     logger.info(f' MAKE_TIFS = {MAKE_TIFS}, MAKE_DATAARRAY = {MAKE_DATAARRAY}, MAKE_TILES = {MAKE_TILES}   ')
@@ -434,73 +429,107 @@ def main(train, test, inference, config):
 
     if MAKE_TIFS:
         logger.info('EXTRACTING VV AND VH CHANNELS')
-    
-        # Filter for .tif files specifically, ignoring system files
-        predict_input = inference_paths['predict_input']
-        valid_files = [f for f in predict_input.iterdir() 
-                       if f.is_file() 
-                       and not f.name.startswith('.') 
-                       and f.suffix.lower() in ['.tif', '.tiff']]
+        predict_input = inference_paths['predict_input_path']
 
-        if not valid_files:
-            logger.error(f"No valid .tif image files found in {predict_input}")
-            raise FileNotFoundError(f"No valid .tif image files found in {predict_input}")
+        if SINGLE_INPUT:
+            # Filter for .tif files specifically, ignoring system files
+
+            valid_files = [f for f in predict_input.iterdir() 
+                           if f.is_file() 
+                           and not f.name.startswith('.') 
+                           and f.suffix.lower() in ['.tif', '.tiff']]
+
+            if not valid_files:
+                logger.error(f"No valid .tif image files found in {predict_input}")
+                raise FileNotFoundError(f"No valid .tif image files found in {predict_input}")
+        
+            # check there is only one file
+            if len(valid_files) > 1:
+                logger.error(f"SINGLE_INPUT is True but multiple .tif files found in {predict_input}")
+                raise ValueError(f"SINGLE_INPUT is True but multiple .tif files found in {predict_input}")
+        
+            image = valid_files[0]  # Take the first valid .tif file
+            logger.info(f"--- Image to process: {image}")
+
+            if not image or not image.is_file():
+                logger.error(f"Image not found: {image}")
+                raise FileNotFoundError(f"Image not found: {image}")
+
+            # Extract the vv and vh channels from the geotiff and make 2 separate tifs
+            with rasterio.open(image) as src:
+                logger.info(f"--- Image shape: {src.shape}")
+                logger.info(f"--- Image CRS: {src.crs}")
+                logger.info(f"--- Image bounds: {src.bounds}")
+                logger.info(f"--- Image transform: {src.transform}")
+
+                # extract the VV and VH bands
+                vv_band = src.read(1)  # Assuming VV is the first band
+                vh_band = src.read(2)  # Assuming VH is the second band
+
+                # Create new TIF files for VV and VH
+                vv_image = extracted / f"{image.stem}_VV.tif"
+                vh_image = extracted / f"{image.stem}_VH.tif"
+
+                logger.info(f'extracted= {extracted}')
+                logger.info(f"--- VV image path: {vv_image}")
+                logger.info(f"--- VH image path: {vh_image}")
+
+                # Write the VV band to a new TIF file
+                with rasterio.open(vv_image, 'w', driver='GTiff', height=vv_band.shape[0], width=vv_band.shape[1],
+                                   count=1, dtype=vv_band.dtype, crs=src.crs, transform=src.transform) as dst:
+                    dst.write(vv_band, 1)
+                logger.info(f"--- VV band saved to {vv_image}")
+
+                # Write the VH band to a new TIF file
+                with rasterio.open(vh_image, 'w', driver='GTiff', height=vh_band.shape[0], width=vh_band.shape[1],
+                                   count=1, dtype=vh_band.dtype, crs=src.crs, transform=src.transform) as dst:
+                    dst.write(vh_band, 1)
+                logger.info(f"--- VH band saved to {vh_image}")
+
+                # Check if the VV and VH images were created successfully
+                if not vv_image.exists() or not vh_image.exists():
+                    logger.error(f"Failed to create VV or VH images")
+                    raise RuntimeError(f"Failed to create VV or VH images")
+
+                logger.info(f"--- VV image: {vv_image}")
+                logger.info(f"--- VH image: {vh_image}")
+        else:
+            vv_image = None
+            vh_image = None
+
+            for file in predict_input.iterdir():
+                if file.suffix.lower() in ['.tif', '.tiff']:
+                    if 'vv' in file.name.lower():
+                        vv_image = file
+                    elif 'vh' in file.name.lower():
+                        vh_image = file
+
+            # Verify both files were found
+            if not vv_image or not vh_image:
+                raise FileNotFoundError(f"Missing VV or VH files in {predict_input}")
+            
+            logger.info(f"--- Found VV: {vv_image.name}")
+            logger.info(f"--- Found VH: {vh_image.name}")
+
+            # move files to extracted folder
+            if not extracted.exists():
+                extracted.mkdir(parents=True, exist_ok=True)
+            shutil.copy(vv_image, extracted / vv_image.name)
+            shutil.copy(vh_image, extracted / vh_image.name)
+            vv_image = extracted / vv_image.name
+            vh_image = extracted / vh_image.name
+            logger.info(f"--- Copied VV to: {vv_image}")
+            logger.info(f"--- Copied VH to: {vh_image}")
+       
+ 
 
 
-        image = valid_files[0]  # Take the first valid .tif file
-        logger.info(f"--- Image to process: {image}")
 
-        if not image or not image.is_file():
-            logger.error(f"Image not found: {image}")
-            raise FileNotFoundError(f"Image not found: {image}")
-
-        # Extract the vv and vh channels from the geotiff and make 2 separate tifs
-        with rasterio.open(image) as src:
-            logger.info(f"--- Image shape: {src.shape}")
-            logger.info(f"--- Image CRS: {src.crs}")
-            logger.info(f"--- Image bounds: {src.bounds}")
-            logger.info(f"--- Image transform: {src.transform}")
-
-            # extract the VV and VH bands
-            vv_band = src.read(1)  # Assuming VV is the first band
-            vh_band = src.read(2)  # Assuming VH is the second band
-
-            # Create new TIF files for VV and VH
-            vv_image = extracted / f"{image.stem}_VV.tif"
-            vh_image = extracted / f"{image.stem}_VH.tif"
-
-            logger.info(f'extracted= {extracted}')
-            logger.info(f"--- VV image path: {vv_image}")
-            logger.info(f"--- VH image path: {vh_image}")
-
-            # Write the VV band to a new TIF file
-            with rasterio.open(vv_image, 'w', driver='GTiff', height=vv_band.shape[0], width=vv_band.shape[1],
-                               count=1, dtype=vv_band.dtype, crs=src.crs, transform=src.transform) as dst:
-                dst.write(vv_band, 1)
-            logger.info(f"--- VV band saved to {vv_image}")
-
-            # Write the VH band to a new TIF file
-            with rasterio.open(vh_image, 'w', driver='GTiff', height=vh_band.shape[0], width=vh_band.shape[1],
-                               count=1, dtype=vh_band.dtype, crs=src.crs, transform=src.transform) as dst:
-                dst.write(vh_band, 1)
-            logger.info(f"--- VH band saved to {vh_image}")
-
-        # Check if the VV and VH images were created successfully
-        if not vv_image.exists() or not vh_image.exists():
-            logger.error(f"Failed to create VV or VH images")
-            raise RuntimeError(f"Failed to create VV or VH images")
-
-        logger.info(f"--- VV image: {vv_image}")
-        logger.info(f"--- VH image: {vh_image}")
-    
-        # Extract image code for later use
-        # splits = image.stem.split('_')
-        # image_code = '_'.join(splits[:2])
-        # logger.info(f"--- Image code: {image_code}")    
 
         if True:
             pass
-            # TODO MAKE SURE EXTENSION = TIF NOT TOFF
+            # THIS is processing steps for TERRASAR-X DATA - NOT USING FOR COPERNICUS S1 DATA
+            # TODO MAKE SURE EXTENSION = TIF NOT TIFF
             # if extracted.exists():
                 # logger.info(f"--- Deleting existing extracted folder: {extracted}")
                 # delete the folder and create a new one
@@ -539,32 +568,65 @@ def main(train, test, inference, config):
             # fnal_extent = extracted / f'{image_code}_32_final_extent.tif'
             # make_float32_inf(reproj_extent, final_extent
 
-    # Initialize cube variable for inference mode
-    cube = None
-    metadata = None
+    # # Initialize cube variable for inference mode
+    # cube = None
+    # metadata = None
     
     if MAKE_DATAARRAY:
-        logger.info(f'++++++++extracted = {extracted}')
+        print(f'=========== MAKING DATAARRAY =========')
+        print(f'WORKING IN EXTRACTED AT:{extracted}')
 
         if not extracted.exists():
-            raise FileNotFoundError(f"extract directory not found: {extracted}")
+            # create the directory if it does not exist
+            extracted.mkdir(parents=True, exist_ok=True)
+            logger.info(f"--- Created extract directory: {extracted}")
+
+
+            # raise FileNotFoundError(f"extract directory not found: {extracted}")
         create_event_datacube_copernicus(extracted, paths.image_code)
         if cube is None:
             raise FileNotFoundError(f"No data cube found in {extracted}")
 
     if MAKE_TILES:
-        cube = next(extracted.rglob("*.nc"), None)
-        if cube is None:
-            logger.error("Cannot create tiles: no data cube available")
-            return
-        if image_tiles_path.exists():
-            logger.info(f"--- Deleting existing inference tiles folder: {image_tiles_path}")
-            shutil.rmtree(image_tiles_path)
-        image_tiles_path.mkdir(exist_ok=True, parents=True)
-        extracted.mkdir(exist_ok=True, parents=True)
-        # TILE DATACUBE
-        #  meteada is a dict used for stcihing later
-        tiles, metadata = tile_datacube_rxr_inf(cube, image_tiles_path, tile_size=tile_size, stride=stride, percent_non_flood=0, inference = inference) 
+        print(f'=========== MAKING TILES =========')
+        if inference:
+            # INFERENCE: Tile directly from GeoTIFF (no datacube needed)
+            logger.info("Tiling directly from GeoTIFF for inference")
+
+            # Get the VV or VH image (either works for georeferencing)
+            # vv_image = next(extracted.glob("*_VV.tif"), None)
+            # if not vv_image or not vv_image.exists():
+            #     logger.error(f"VV image not found in {extracted}")
+            #     raise FileNotFoundError(f"VV image not found in {extracted}")
+
+            if image_tiles_path.exists():
+                logger.info(f"Deleting existing inference tiles: {image_tiles_path}")
+                shutil.rmtree(image_tiles_path)
+            image_tiles_path.mkdir(exist_ok=True, parents=True)
+
+            # Tile directly from GeoTIFF
+            tiles, metadata = tile_geotiff_directly(
+                vv_image=extracted / vv_image,
+                vh_image=extracted / vh_image,
+                output_path=image_tiles_path,
+                tile_size=tile_size,
+                stride=stride
+            )
+
+            logger.info(f'metadata= {metadata}')
+        else:
+            cube = next(extracted.rglob("*.nc"), None)
+            if cube is None:
+                logger.error("Cannot create tiles: no data cube available")
+                return
+            if image_tiles_path.exists():
+                logger.info(f"--- Deleting existing inference tiles folder: {image_tiles_path}")
+                shutil.rmtree(image_tiles_path)
+            image_tiles_path.mkdir(exist_ok=True, parents=True)
+            extracted.mkdir(exist_ok=True, parents=True)
+            # TILE DATACUBE
+            #  meteada is a dict used for stcihing later
+            tiles, metadata = tile_datacube_rxr_inf(cube, image_tiles_path, tile_size=tile_size, stride=stride, percent_non_flood=0, inference = False) 
 
         with open(metadata_path, "w") as f:
             json.dump(metadata, f, indent=4)
@@ -605,9 +667,9 @@ def main(train, test, inference, config):
         # Training dataset
         train_dataset = Sen1Dataset(
             job_type="train",
-            working_dir=paths.training_dir,
-            images_dir=paths.images_dir,
-            labels_dir=paths.labels_dir,
+            working_path=paths.training_path,
+            images_path=paths.images_path,
+            labels_path=paths.labels_path,
             csv_path=paths.train_csv,
             image_code=paths.image_code,
             input_is_linear=input_is_linear,
@@ -617,9 +679,9 @@ def main(train, test, inference, config):
         # Validation dataset
         val_dataset = Sen1Dataset(
             job_type="val",
-            working_dir=paths.training_dir,
-            images_dir=paths.images_dir,
-            labels_dir=paths.labels_dir,
+            working_path=paths.training_path,
+            images_path=paths.images_path,
+            labels_path=paths.labels_path,
             csv_path=paths.val_csv,
             image_code=paths.image_code,
             input_is_linear=input_is_linear,
@@ -644,9 +706,9 @@ def main(train, test, inference, config):
         # Test dataset
         test_dataset = Sen1Dataset(
             job_type="test",
-            working_dir=paths.test_dir,
-            images_dir=paths.images_dir,
-            labels_dir=paths.labels_dir,
+            working_path=paths.test_path,
+            images_path=paths.images_path,
+            labels_path=paths.labels_path,
             csv_path=paths.test_csv,
             image_code=paths.image_code,
             input_is_linear=input_is_linear,
@@ -668,9 +730,9 @@ def main(train, test, inference, config):
         # Inference dataset
         inference_dataset = Sen1Dataset(
             job_type="inference",
-            working_dir=working_dir,
-            images_dir=paths.images_dir,
-            labels_dir=paths.labels_dir,
+            working_path=working_path,
+            images_path=paths.images_path,
+            labels_path=paths.labels_path,
             csv_path=file_list,
             image_code=image_code,
             input_is_linear=input_is_linear,
@@ -691,10 +753,10 @@ def main(train, test, inference, config):
             mode="min",
     )
         ###########    SETUP TRAINING LOOP    #########
-        ckpt_dir = paths.ckpt_training_dir
-        ckpt_dir.mkdir(parents=True, exist_ok=True)
+        ckpt_path = paths.ckpt_training_path
+        ckpt_path.mkdir(parents=True, exist_ok=True)
         checkpoint_callback = ModelCheckpoint(
-            dirpath=ckpt_dir,
+            dirpath=ckpt_path,
             filename=run_name,
             monitor="val_loss",
             mode="min",
@@ -758,12 +820,12 @@ def main(train, test, inference, config):
 
     elif inference:
 
-        pred_tiles_dir = inference_paths['pred_tiles_dir']
+        pred_tiles_path = inference_paths['pred_tiles_path']
         # DELETE THE PREDICTION FOLDER IF IT EXISTS
-        if pred_tiles_dir.exists():
-            logger.info(f"Deleting existing predictions folder: {pred_tiles_dir}")
-            shutil.rmtree(pred_tiles_dir)
-        pred_tiles_dir.mkdir(exist_ok=True)
+        if pred_tiles_path.exists():
+            logger.info(f"Deleting existing predictions folder: {pred_tiles_path}")
+            shutil.rmtree(pred_tiles_path)
+        pred_tiles_path.mkdir(exist_ok=True)
 
         #  # MAKE PREDICTION TILES
         logger.info(">>>>>>>> MAKE PREDICTION TILES")
@@ -797,11 +859,11 @@ def main(train, test, inference, config):
                         profile = src.profile
                     profile.update(dtype="float32", count=1)
 
-                    dst_path = pred_tiles_dir / name
+                    dst_path = pred_tiles_path / name
                     with rasterio.open(dst_path, "w", **profile) as dst:
                         dst.write(out.astype("float32"), 1)  
 
-            ims_list = list(pred_tiles_dir.glob("*.tif"))
+            ims_list = list(pred_tiles_path.glob("*.tif"))
             if len(ims_list) > 0:
                 # Load metadata for stitching
                 if not metadata_path.exists():
@@ -815,9 +877,9 @@ def main(train, test, inference, config):
         input_image = next(extracted.rglob("*.tif"), None) if extracted.exists() else None
         if input_image and ('vv' in input_image.name.lower() or 'vh' in input_image.name.lower()) and input_image.suffix.lower() == '.tif':
             logger.info(f"---input_image: {input_image}")
-            logger.info(f"---pred_tiles_dir: {pred_tiles_dir}")
+            logger.info(f"---pred_tiles_path: {pred_tiles_path}")
             logger.info(f'---extracted folder: {extracted}')
-            stitch_tiles(metadata, pred_tiles_dir, stitched_image, input_image)
+            stitch_tiles(metadata, pred_tiles_path, stitched_image, input_image)
         else:
             logger.warning(f"No suitable input image found in {extracted} for stitching")
             logger.info("Prediction tiles created but stitching skipped")  

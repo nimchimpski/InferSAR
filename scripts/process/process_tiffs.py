@@ -676,20 +676,20 @@ def nan_check(nparray):
         logger.info("----NO NANS FOUND")
         return True
 
-def create_event_datacube_TSX(extracted_dir, mask_code, VERSION="v1"):
+def create_event_datacube_TSX(extracted_path, mask_code, VERSION="v1"):
     '''
     An xarray dataset is created for the event folder and saved as a .nc file.
     '''
-    logger.info(f'+++++++++++ IN CREAT EVENT DATACUBE TSX {extracted_dir.name}+++++++++++++++++')
+    logger.info(f'+++++++++++ IN CREAT EVENT DATACUBE TSX {extracted_path.name}+++++++++++++++++')
     # FIND THE EXTRACTED FOLDER
-    # extracted_dir = list(event.rglob(f'*{mask_code}_extracted'))[0]
+    # extracted_path = list(event.rglob(f'*{mask_code}_extracted'))[0]
 
-    logger.info(f'---extracted-folder = {extracted_dir}')
+    logger.info(f'---extracted-folder = {extracted_path}')
     logger.info(f'---mask code= {mask_code}')
-    layerdict = make_layerdict_TSX(extracted_dir)
+    layerdict = make_layerdict_TSX(extracted_path)
 
     logger.info(f'---making das from layerdict= {layerdict}')
-    dataarrays, layer_names = make_das_from_layerdict( layerdict, extracted_dir)
+    dataarrays, layer_names = make_das_from_layerdict( layerdict, extracted_path)
 
     # logger.info(f'---CHECKING DATAARRAY LIST')
     # check_dataarray_list(dataarrays, layer_names)
@@ -710,24 +710,29 @@ def create_event_datacube_TSX(extracted_dir, mask_code, VERSION="v1"):
     # logger.info('---Rechunked datacube')  
 
     #######   SAVING ############
-    output_path = extracted_dir / f"{mask_code}.nc"
+    output_path = extracted_path / f"{mask_code}.nc"
     da.to_netcdf(output_path, mode='w', format='NETCDF4', engine='netcdf4')
     
-    logger.info(f'>>>>>>>>>>>  ds saved for= {extracted_dir.name} bye bye >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n')
+    logger.info(f'>>>>>>>>>>>  ds saved for= {extracted_path.name} bye bye >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n')
 
-def create_event_datacube_copernicus(extracted_dir, image_code, VERSION="v1"):
+def create_event_datacube_copernicus(extracted_path, image_code, VERSION="v1"):
     '''
-    An xarray dataset is created for the extracted_dir folder and saved as a .nc file.
+    Creates NetCDF datacube from extracted GeoTIFFs.
+    
+    Used for: TRAIN and TEST modes only
+    INFERENCE: Skips this - tiles directly from normalized TIFFs, with MAKE_TIFFS=True
+    
+    An xarray dataset is created for the extracted_path folder and saved as a .nc file.
     '''
-    logger.info(f'+++++++++++ IN CREAT EVENT  DATACUBE COPERNCUS in {extracted_dir.name}+++++++++++++++++')
+    logger.info(f'+++++++++++ IN CREAT EVENT  DATACUBE COPERNCUS in {extracted_path.name}+++++++++++++++++')
     # FIND THE EXTRACTED FOLDER
     logger.info(f'---image code= {image_code}')
-    logger.info(f'---extracted folder = {extracted_dir}')
-    layerdict = make_layerdict(extracted_dir)
+    logger.info(f'---extracted folder = {extracted_path}')
+    layerdict = make_layerdict(extracted_path)
 
     logger.info(f'---making das from layerdict= {layerdict}')
 
-    dataarrays, layer_names = make_das_from_layerdict( layerdict, extracted_dir)
+    dataarrays, layer_names = make_das_from_layerdict( layerdict, extracted_path)
 
     logger.info(f'---CHECKING DATAARRAY LIST')
     # check_dataarray_list(dataarrays, layer_names)
@@ -748,10 +753,10 @@ def create_event_datacube_copernicus(extracted_dir, image_code, VERSION="v1"):
     # logger.info('---Rechunked datacube')  
 
     #######   SAVING ############
-    output_path = extracted_dir / f"{image_code}.nc"
+    output_path = extracted_path / f"{image_code}.nc"
     da.to_netcdf(output_path, mode='w', format='NETCDF4', engine='netcdf4')
     
-    logger.info(f'##################  ds saved in = {extracted_dir.name} bye bye #################\n')
+    logger.info(f'##################  ds saved in = {extracted_path.name} bye bye #################\n')
 
 # WORK ON DEM
 def match_dem_to_mask(sar_image, dem, output_path):
@@ -912,6 +917,79 @@ def align_image_to_mask(sar_image, mask, aligned_image):
                 )
 
     logger.info(f"---Aligned SAR image saved to: {aligned_image}")
+
+#  TILING
+def tile_geotiff_directly(vv_image: Path, vh_image: Path, output_path: Path, 
+                         tile_size: int = 512, stride: int = 512) -> tuple:
+    """
+    Tile VV and VH GeoTIFFs directly without creating datacube.
+    More efficient for inference.
+    
+    Returns:
+        tiles: List of tile paths
+        metadata: Dict with tile info for stitching
+    """
+    import rasterio
+    from rasterio.windows import Window
+    
+    tiles = []
+    metadata = {'tile_info': []}
+    
+    # Open both images
+    with rasterio.open(vv_image) as vv_src, rasterio.open(vh_image) as vh_src:
+        # Verify they have same dimensions
+        assert vv_src.shape == vh_src.shape, "VV and VH must have same dimensions"
+        
+        height, width = vv_src.shape
+        profile = vv_src.profile.copy()
+        profile.update(count=2, dtype='float32')  # 2 channels (VV, VH)
+        
+        tile_idx = 0
+        for y in range(0, height - tile_size + 1, stride):
+            for x in range(0, width - tile_size + 1, stride):
+                window = Window(x, y, tile_size, tile_size)
+                
+                # Read VV and VH for this window
+                vv_data = vv_src.read(1, window=window)
+                vh_data = vh_src.read(1, window=window)
+                
+                # Stack into 2-channel tile
+                tile_data = np.stack([vv_data, vh_data], axis=0)
+                
+                # Create tile filename
+                tile_name = f"tile_{tile_idx:04d}_{y}_{x}.tif"
+                tile_path = output_path / tile_name
+                
+                # Get transform for this window
+                tile_transform = vv_src.window_transform(window)
+                profile.update(transform=tile_transform, 
+                              height=tile_size, 
+                              width=tile_size)
+                
+                # TODO NORMALISE TO db
+
+                # Write tile
+                with rasterio.open(tile_path, 'w', **profile) as dst:
+                    dst.write(tile_data)
+                
+                tiles.append(tile_path)
+                metadata['tile_info'].append({
+                    'tile_name': tile_name,
+                    'x': x,
+                    'y': y,
+                    'width': tile_size,
+                    'height': tile_size
+                })
+                
+                tile_idx += 1
+        
+        # Add global metadata for stitching
+        metadata['original_width'] = width
+        metadata['original_height'] = height
+        metadata['transform'] = list(vv_src.transform)
+        metadata['crs'] = str(vv_src.crs)
+    
+    return tiles, metadata
 
 # probably not needed
 def process_terraSARx_data(data_root):

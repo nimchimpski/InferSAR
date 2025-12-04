@@ -1,5 +1,23 @@
 -There are google keep notes and sketches
 
+TRAIN MODE:
+
+TEST MODE:
+
+INFERENCE MODE:
+input = VV + VH tifs
+MAKE_TILES = True
+- this where input images are normalised.
+MAKE_DATACUBE = False
+- this is too expensive
+MAKE_TILES = True
+- as we didnt create a datacube, conditiponaly tile direct from normalised Tifs
+
+
+
+
+
+
 
 ## CSV Format
 

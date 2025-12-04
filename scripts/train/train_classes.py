@@ -242,9 +242,9 @@ class Sen1Dataset(Dataset):
     def __init__(
         self,
         job_type:       str,        # "train","val" or "infer"
-        working_dir:   Path,       # root of your S1Hand/… folders
-        images_dir:   str,        # e.g. "S1Hand" or "S1Hand_tiles"
-        labels_dir:   str,        # e.g. "LabelHand" or "LabelHand_tiles"
+        working_path:   Path,       # root of your S1Hand/… folders
+        images_path:   str,        # e.g. "S1Hand" or "S1Hand_tiles"
+        labels_path:   str,        # e.g. "LabelHand" or "LabelHand_tiles"
         csv_path:       Path,
         image_code:     str,        # e.g. "myevent"
         input_is_linear: bool,
@@ -253,7 +253,7 @@ class Sen1Dataset(Dataset):
     ):
         assert job_type in ("train","val", "test", "inference")
         self.job_type        = job_type
-        self.working_dir    = working_dir
+        self.working_path    = working_path
         self.image_code      = image_code
         self.input_is_linear = input_is_linear
         self.db_min          = db_min
@@ -264,10 +264,10 @@ class Sen1Dataset(Dataset):
         self.mask_paths: List[Path] = []
         self.fnames:     List[str]  = []
         if job_type == "inference":
-            tile_dir = working_dir / f"{image_code}_tiles"
+            tile_path = working_path / f"{image_code}_tiles"
         else:
-            tile_dir = images_dir
-            mask_dir = labels_dir
+            tile_path = images_path
+            mask_path = labels_path
 
         
         # 1) parse the CSV
@@ -284,13 +284,13 @@ class Sen1Dataset(Dataset):
                 img_name = row[0].strip()
                 # img_name = row[0].strip()
                 logger.info(f"/////Processing image: {img_name}")
-                self.img_paths.append(tile_dir / img_name)
+                self.img_paths.append(tile_path / img_name)
                 self.fnames.append(img_name)
 
                 # only for train/val do we need the second column
                 if job_type in ("train","val", "test"):
                     mask_name = row[1]
-                    self.mask_paths.append(mask_dir / mask_name)
+                    self.mask_paths.append(mask_path / mask_name)
             print('\nXXXXXXXXXXXXXXXXXXXXXXXXXXXX\n')
 
         logger.info(f"/////Found {len(self.img_paths)} images in {csv_path}")

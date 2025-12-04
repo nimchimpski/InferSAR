@@ -26,6 +26,10 @@ def create_weight_matrix(tile_size, overlap_size):
 
 
 def make_prediction_tiles(tile_folder, metadata, model, device, threshold, ):
+    '''
+ inputs = tiles and metadata
+ outputs = prediction tiles saved to disk
+    '''
     logger.info(f'---ORIGINAL PREDICTIONS FUNCTION')
     predictions_folder = Path(tile_folder).parent / f'{tile_folder.stem}_predictions'
     if predictions_folder.exists():
