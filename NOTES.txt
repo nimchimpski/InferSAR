@@ -5,6 +5,9 @@ TRAIN MODE:
 TEST MODE:
 
 INFERENCE MODE:
+MAKE TIFS = TRUE 
+Then choose single or multiband input
+
 input = VV + VH tifs
 MAKE_TILES = True
 - this where input images are normalised.

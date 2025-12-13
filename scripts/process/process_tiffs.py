@@ -932,8 +932,10 @@ def tile_geotiff_directly(vv_image: Path, vh_image: Path, output_path: Path,
     import rasterio
     from rasterio.windows import Window
     
+    logger.info('\n\n++++++++++++++ IN TILE_GEOTIFF_DIRECTLY FN\n')
+
     tiles = []
-    metadata = {'tile_info': []}
+    metadata = []
     
     # Open both images
     with rasterio.open(vv_image) as vv_src, rasterio.open(vh_image) as vh_src:
@@ -943,11 +945,19 @@ def tile_geotiff_directly(vv_image: Path, vh_image: Path, output_path: Path,
         height, width = vv_src.shape
         profile = vv_src.profile.copy()
         profile.update(count=2, dtype='float32')  # 2 channels (VV, VH)
+        logger.info(f'image dimensions: width={width}, height={height}')
         
         tile_idx = 0
-        for y in range(0, height - tile_size + 1, stride):
-            for x in range(0, width - tile_size + 1, stride):
-                window = Window(x, y, tile_size, tile_size)
+        for y in range(0, height, stride):  # Changed: iterate through full height
+            for x in range(0, width, stride):  # Changed: iterate through full width
+                # Calculate actual tile bounds (handles edge tiles correctly)
+                x_end = min(x + tile_size, width)
+                y_end = min(y + tile_size, height)
+                actual_width = x_end - x
+                actual_height = y_end - y
+                
+                # Create window with actual dimensions
+                window = Window(x, y, actual_width, actual_height)
                 
                 # Read VV and VH for this window
                 vv_data = vv_src.read(1, window=window)
@@ -956,38 +966,42 @@ def tile_geotiff_directly(vv_image: Path, vh_image: Path, output_path: Path,
                 # Stack into 2-channel tile
                 tile_data = np.stack([vv_data, vh_data], axis=0)
                 
-                # Create tile filename
+                # Create tile filename (using y, x for consistency with xarray version)
                 tile_name = f"tile_{tile_idx:04d}_{y}_{x}.tif"
                 tile_path = output_path / tile_name
                 
                 # Get transform for this window
                 tile_transform = vv_src.window_transform(window)
                 profile.update(transform=tile_transform, 
-                              height=tile_size, 
-                              width=tile_size)
+                              height=actual_height, 
+                              width=actual_width)
                 
-                # TODO NORMALISE TO db
-
                 # Write tile
                 with rasterio.open(tile_path, 'w', **profile) as dst:
                     dst.write(tile_data)
                 
                 tiles.append(tile_path)
-                metadata['tile_info'].append({
+                
+                x_end = min(x + tile_size, width)
+                y_end = min(y + tile_size, height)
+
+                metadata.append({
                     'tile_name': tile_name,
-                    'x': x,
-                    'y': y,
-                    'width': tile_size,
-                    'height': tile_size
+                    'x_start': x,
+                    'y_start': y,
+                    'x_end': x_end,
+                    'y_end': y_end,
+                    'width': x_end - x,      # Direct calculation
+                    'height': y_end - y      # Direct calculation
                 })
                 
                 tile_idx += 1
         
         # Add global metadata for stitching
-        metadata['original_width'] = width
-        metadata['original_height'] = height
-        metadata['transform'] = list(vv_src.transform)
-        metadata['crs'] = str(vv_src.crs)
+        # metadata['original_width'] = width
+        # metadata['original_height'] = height
+        # metadata['transform'] = list(vv_src.transform)
+        # metadata['crs'] = str(vv_src.crs)
     
     return tiles, metadata
 

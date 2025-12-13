@@ -145,12 +145,14 @@ def stitch_tiles(metadata: list, prediction_tiles, save_path, image):
         logger.info(f"stitched_image shape: { stitched_image.shape}")
         #logger.info unique values in the stitched image
         # logger.info(f'unique values in empty stitched image: {np.unique(stitched_image)}')
+    metadata_tile_list = metadata
+    logger.info(f'---metadata_tile_list: {type(metadata_tile_list)}')
 
-    for tile_info in tqdm(metadata, desc="Stitching tiles"):
-        tile_name = tile_info["tile_name"]
+    for tile in tqdm(metadata_tile_list, desc="Stitching tiles"):
+        tile_name = tile["tile_name"]
         # Extract position info from metadata
-        x_start, x_end = tile_info["x_start"], tile_info["x_end"]
-        y_start, y_end = tile_info["y_start"], tile_info["y_end"]
+        x_start, x_end = tile["x_start"], tile["x_end"]
+        y_start, y_end = tile["y_start"], tile["y_end"]
 
         # Find the corresponding prediction tile
         tile = prediction_tiles / tile_name
@@ -224,9 +226,10 @@ def create_inference_csv(metadata):
     Args:
         metadata (list): List of dictionaries containing tile information.
     """
-
+    logger.info(f'\n\n++++++++ IN CREATE INFERENCE CSV\n')
     # Extract tile names and create dummy mask values
     tile_names = [tile_info["tile_name"] for tile_info in metadata]
+    logger.info(f'---tile names: {tile_names}')
     dummy_masks = ["dummy_mask" for _ in tile_names]  # Dummy values for masks
 
     # Create a DataFrame
@@ -234,6 +237,7 @@ def create_inference_csv(metadata):
         "image": tile_names,
         "mask": dummy_masks
     })
+    logger.info(f'\n\n+++++++ END FUNCTION\n')
     return df
 
 def write_df_to_csv(df, csv_path):

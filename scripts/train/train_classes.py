@@ -264,7 +264,7 @@ class Sen1Dataset(Dataset):
         self.mask_paths: List[Path] = []
         self.fnames:     List[str]  = []
         if job_type == "inference":
-            tile_path = working_path / f"{image_code}_tiles"
+            tile_path = working_path / "tiles"
         else:
             tile_path = images_path
             mask_path = labels_path
@@ -283,7 +283,7 @@ class Sen1Dataset(Dataset):
                     continue  # skip empty rows
                 img_name = row[0].strip()
                 # img_name = row[0].strip()
-                logger.info(f"/////Processing image: {img_name}")
+       
                 self.img_paths.append(tile_path / img_name)
                 self.fnames.append(img_name)
 
@@ -291,10 +291,10 @@ class Sen1Dataset(Dataset):
                 if job_type in ("train","val", "test"):
                     mask_name = row[1]
                     self.mask_paths.append(mask_path / mask_name)
-            print('\nXXXXXXXXXXXXXXXXXXXXXXXXXXXX\n')
 
-        logger.info(f"/////Found {len(self.img_paths)} images in {csv_path}")
-        logger.info(f'///imgs_paths: {self.img_paths}   ')
+
+        logger.info(f"Found {len(self.img_paths)} images in {csv_path}")
+        logger.info(f'imgs_paths: {self.img_paths}   ')
         # sanity check
         if job_type in ("train","val"):
             assert len(self.img_paths) == len(self.mask_paths), (

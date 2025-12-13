@@ -66,7 +66,7 @@ from datetime import datetime
 # .............................................................
 
 # Add project directory to Python path for imports
-project_path = Path(__file__).parent.parent.absolute()
+project_path = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_path))
 
 from scripts.process.process_helpers import handle_interrupt, read_minmax_from_json, print_tiff_info_TSX
@@ -163,13 +163,13 @@ class ProjectPaths:
     def get_inference_paths(self, sensor: str = 'sensor', date: str = 'date', tile_size: int =512, threshold: float = 0.5, output_filename: str = '_name') -> dict:
         # GRAB OUTPUT_FILENAME
       
-        image_tiles_path = self.predictions_path / f'{self.image_code}_tiles'
+        image_tiles_path = self.predictions_path / f'tiles'
         return {
             'predict_input_path': self.project_path / "data" / "4final" / "predict_input",
             'pred_tiles_path': self.predictions_path / f'{output_filename}_predictions',
             'image_tiles_path': image_tiles_path,
-            'extracted_path': self.predictions_path / f'{self.image_code}_extracted',
-            'file_list': self.predictions_path / "predict_tile_list.csv",
+            'extracted_path': self.predictions_path / 'extracted',
+            'file_list_csv_path': self.predictions_path / "predict_tile_list.csv",
             'stitched_image': self.predictions_path / f'{sensor}_{self.image_code}_{date}_{tile_size}_{threshold}_{output_filename}_WATER_AI.tif',
             'metadata_path': image_tiles_path / 'tile_metadata.json'
         }
@@ -323,7 +323,7 @@ def main(train, test, inference, config):
             threshold=threshold,
             output_filename= '_name'
         )
-        file_list = inference_paths['file_list']
+        file_list_csv_path = inference_paths['file_list_csv_path']
         image_tiles_path = inference_paths['image_tiles_path']
         extracted = inference_paths['extracted_path']
         metadata_path = inference_paths['metadata_path']
@@ -413,14 +413,13 @@ def main(train, test, inference, config):
 # ##################################################################
     #########    TRAIN / TEST - CREATE DATA LOADERS    #########
     if train:
-        file_list = paths.train_csv
+        file_list_csv_path = paths.train_csv
         training_paths = paths.get_training_paths()
         image_tiles_path = training_paths['image_tiles_path']
     elif test:
-        file_list = paths.test_csv
+        file_list_csv_path = paths.test_csv
         training_paths = paths.get_training_paths()
         image_tiles_path = training_paths['image_tiles_path']
-
 
     # Only delete and recreate folders for inference mode
     logger.info(f' MAKE_TIFS = {MAKE_TIFS}, MAKE_DATAARRAY = {MAKE_DATAARRAY}, MAKE_TILES = {MAKE_TILES}   ')
@@ -433,6 +432,7 @@ def main(train, test, inference, config):
 
         if SINGLE_INPUT:
             # Filter for .tif files specifically, ignoring system files
+            print('=====SINGLE MULTIBAND INPUT======')
 
             valid_files = [f for f in predict_input.iterdir() 
                            if f.is_file() 
@@ -466,60 +466,63 @@ def main(train, test, inference, config):
                 vv_band = src.read(1)  # Assuming VV is the first band
                 vh_band = src.read(2)  # Assuming VH is the second band
 
-                # Create new TIF files for VV and VH
-                vv_image = extracted / f"{image.stem}_VV.tif"
-                vh_image = extracted / f"{image.stem}_VH.tif"
+                # Create new TIF file_paths for VV and VH
+                vv_image_path = extracted / f"{image.stem}_VV.tif"
+                vh_image_path = extracted / f"{image.stem}_VH.tif"
 
                 logger.info(f'extracted= {extracted}')
-                logger.info(f"--- VV image path: {vv_image}")
-                logger.info(f"--- VH image path: {vh_image}")
+                logger.info(f"--- VV image path: {vv_image_path}")
+                logger.info(f"--- VH image path: {vh_image_path}")
 
                 # Write the VV band to a new TIF file
-                with rasterio.open(vv_image, 'w', driver='GTiff', height=vv_band.shape[0], width=vv_band.shape[1],
+                with rasterio.open(vv_image_path, 'w', driver='GTiff', height=vv_band.shape[0], width=vv_band.shape[1],
                                    count=1, dtype=vv_band.dtype, crs=src.crs, transform=src.transform) as dst:
                     dst.write(vv_band, 1)
-                logger.info(f"--- VV band saved to {vv_image}")
+                logger.info(f"--- VV band saved to {vv_image_path}")
 
                 # Write the VH band to a new TIF file
-                with rasterio.open(vh_image, 'w', driver='GTiff', height=vh_band.shape[0], width=vh_band.shape[1],
+                with rasterio.open(vh_image_path, 'w', driver='GTiff', height=vh_band.shape[0], width=vh_band.shape[1],
                                    count=1, dtype=vh_band.dtype, crs=src.crs, transform=src.transform) as dst:
                     dst.write(vh_band, 1)
-                logger.info(f"--- VH band saved to {vh_image}")
+                logger.info(f"--- VH band saved to {vh_image_path}")
 
                 # Check if the VV and VH images were created successfully
-                if not vv_image.exists() or not vh_image.exists():
+                if not vv_image_path.exists() or not vh_image_path.exists():
                     logger.error(f"Failed to create VV or VH images")
                     raise RuntimeError(f"Failed to create VV or VH images")
 
-                logger.info(f"--- VV image: {vv_image}")
-                logger.info(f"--- VH image: {vh_image}")
+                logger.info(f"wrote VV tif at vv_image_path: {vv_image_path}")
+                logger.info(f"wrote VH tiff at vh_image_path: {vh_image_path}")
         else:
-            vv_image = None
-            vh_image = None
+            print('=====DUAL IMAGE INPUT======')
+            vv_image_path = None
+            vh_image_path = None
 
             for file in predict_input.iterdir():
                 if file.suffix.lower() in ['.tif', '.tiff']:
                     if 'vv' in file.name.lower():
-                        vv_image = file
+                        vv_image_path = file
                     elif 'vh' in file.name.lower():
-                        vh_image = file
+                        vh_image_path = file
 
             # Verify both files were found
-            if not vv_image or not vh_image:
+            if not vv_image_path or not vh_image_path:
                 raise FileNotFoundError(f"Missing VV or VH files in {predict_input}")
             
-            logger.info(f"--- Found VV: {vv_image.name}")
-            logger.info(f"--- Found VH: {vh_image.name}")
-
-            # move files to extracted folder
+            logger.info(f"Found VV: {vv_image_path}")
+            logger.info(f"Found VH: {vh_image_path}")
+            # copy files to extracted folder
             if not extracted.exists():
                 extracted.mkdir(parents=True, exist_ok=True)
-            shutil.copy(vv_image, extracted / vv_image.name)
-            shutil.copy(vh_image, extracted / vh_image.name)
-            vv_image = extracted / vv_image.name
-            vh_image = extracted / vh_image.name
-            logger.info(f"--- Copied VV to: {vv_image}")
-            logger.info(f"--- Copied VH to: {vh_image}")
+
+            shutil.copy(vv_image_path, extracted / 'vv_copy.tif')
+            vv_image_path = extracted / 'vv_copy.tif'
+            logger.info(f"Copied VV to: {vv_image_path}")
+
+            shutil.copy(vh_image_path, extracted / 'vh_copy.tif')
+            vh_image_path = extracted / 'vh_copy.tif'
+
+            logger.info(f"Copied VH to: {vh_image_path}")
        
  
 
@@ -594,8 +597,8 @@ def main(train, test, inference, config):
             logger.info("Tiling directly from GeoTIFF for inference")
 
             # Get the VV or VH image (either works for georeferencing)
-            # vv_image = next(extracted.glob("*_VV.tif"), None)
-            # if not vv_image or not vv_image.exists():
+            # vv_image_path = next(extracted.glob("*_VV.tif"), None)
+            # if not vv_image_path or not vv_image.exists():
             #     logger.error(f"VV image not found in {extracted}")
             #     raise FileNotFoundError(f"VV image not found in {extracted}")
 
@@ -603,17 +606,33 @@ def main(train, test, inference, config):
                 logger.info(f"Deleting existing inference tiles: {image_tiles_path}")
                 shutil.rmtree(image_tiles_path)
             image_tiles_path.mkdir(exist_ok=True, parents=True)
+            logger.info(f"About to tile from:")
+            logger.info(f"  VV: {vv_image_path}")
+            logger.info(f"  VH: {vh_image_path}")
+            logger.info(f"  Output: {image_tiles_path}")
+            logger.info(f"  Tile size: {tile_size}, Stride: {stride}")
+    
+            # Check files exist
+            if not vv_image_path.exists():
+                logger.error(f"VV file does not exist: {vv_image_path}")
+            if not vh_image_path.exists():
+                logger.error(f"VH file does not exist: {vh_image_path}")
+
+            # Check image dimensions
+            with rasterio.open(vv_image_path) as src:
+                logger.info(f"VV image dimensions: {src.shape}")
+                logger.info(f"VV image size: height={src.height}, width={src.width}")
 
             # Tile directly from GeoTIFF
             tiles, metadata = tile_geotiff_directly(
-                vv_image=extracted / vv_image,
-                vh_image=extracted / vh_image,
+                vv_image=vv_image_path,
+                vh_image=vh_image_path,
                 output_path=image_tiles_path,
                 tile_size=tile_size,
                 stride=stride
             )
-
-            logger.info(f'metadata= {metadata}')
+            logger.info(f'metadata path: {metadata_path}')
+            logger.info(f'metadata: {metadata}')
         else:
             cube = next(extracted.rglob("*.nc"), None)
             if cube is None:
@@ -634,13 +653,17 @@ def main(train, test, inference, config):
         logger.info(f"{len(tiles)} tiles saved to {image_tiles_path}")
 
         # CREATE CSV FOR INFERENCE DATALOADER USING THE METADATA
-        inference_list_dataframe = create_inference_csv(metadata)
-        write_df_to_csv(inference_list_dataframe, file_list)
+
+        inference_list_df = create_inference_csv(metadata)
+
+        inference_list_df.to_csv(file_list_csv_path, index=False, header=False)
+        logger.info(f"---Inference CSV created at {file_list_csv_path}")
+        # write_df_to_csv(inference_list_dataframe, file_list_csv_path)
 
     # VERIFY CSV EXISTS OR WAS MADE  
-    if not file_list.exists():
-        logger.error(f"Failed to create inference CSV file: {file_list}")
-        raise FileNotFoundError(f"CSV file does not exist / was not created: {file_list}")
+    if not file_list_csv_path.exists():
+        logger.error(f"Failed to create inference CSV file: {file_list_csv_path}")
+        raise FileNotFoundError(f"CSV file does not exist / was not created: {file_list_csv_path}")
         ########     INITIALISE THE MODEL     #########
     model = UnetModel(encoder_name='resnet34', in_channels=in_channels, classes=1, pretrained=PRETRAINED).to(device)
     # LOAD THE CHECKPOINT
@@ -733,7 +756,7 @@ def main(train, test, inference, config):
             working_path=working_path,
             images_path=paths.images_path,
             labels_path=paths.labels_path,
-            csv_path=file_list,
+            csv_path=file_list_csv_path,
             image_code=image_code,
             input_is_linear=input_is_linear,
             db_min=db_min,
@@ -828,9 +851,11 @@ def main(train, test, inference, config):
         pred_tiles_path.mkdir(exist_ok=True)
 
         #  # MAKE PREDICTION TILES
-        logger.info(">>>>>>>> MAKE PREDICTION TILES")
+        logger.info("\n\n========== MAKING PREDICTION TILES==========\n")
         with torch.no_grad():
+            t = 1
             for imgs, valids, fnames in tqdm(dataloader, desc="Predict"):
+                logger.info(f'Processing batch {t} with {imgs.shape[0]} tiles')
                 logger.info(f'images shape: {imgs.shape}, valids shape: {valids.shape}, fnames: {fnames}')
                 logger.info(f"First image filename: {fnames[0]}")
 
@@ -866,12 +891,13 @@ def main(train, test, inference, config):
             ims_list = list(pred_tiles_path.glob("*.tif"))
             if len(ims_list) > 0:
                 # Load metadata for stitching
+                logger.info(f"Loading metadata from: {metadata_path}")
                 if not metadata_path.exists():
-                    logger.error(f"Metadata file not found: {metadata_path}")
                     return
 
                 with open(metadata_path, "r") as f:
                     metadata = json.load(f) 
+                logger.info(f"Metadata loaded with {len(metadata)} entries\n####/////{metadata}")
 
         # STITCH PREDICTION TILES
         input_image = next(extracted.rglob("*.tif"), None) if extracted.exists() else None
