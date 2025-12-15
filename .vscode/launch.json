@@ -25,6 +25,17 @@
             "program": "${workspaceFolder}/scripts/run_master_new.py",
             "console": "integratedTerminal",
             "args": ["--test"]
-        }
+        },
+        {
+            "name": "Python: Test Mode",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/run_master_new.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--test",
+                "--ckpt_input"  // Add this to use the INPUT checkpoint
+            ]
+        },
     ]
 }

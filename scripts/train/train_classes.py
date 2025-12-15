@@ -294,7 +294,7 @@ class Sen1Dataset(Dataset):
 
 
         logger.info(f"Found {len(self.img_paths)} images in {csv_path}")
-        logger.info(f'imgs_paths: {self.img_paths}   ')
+        logger.debug(f'imgs_paths: {self.img_paths}   ')
         # sanity check
         if job_type in ("train","val"):
             assert len(self.img_paths) == len(self.mask_paths), (

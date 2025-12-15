@@ -111,7 +111,7 @@ class ProjectPaths:
         self.test_csv = self.dataset_path / "flood_test_data.csv"
         
         # Checkpoint directories (consolidated)
-        self.ckpt_input_path = project_path / "checkpoints" / 'ckpt_INPUT'
+        self.ckpt_input_path = project_path / "checkpoints" / 'ckpt_input'
         self.ckpt_training_path = self.project_path / "checkpoints" / "ckpt_training"
         
         # Config files
@@ -222,10 +222,12 @@ class ProjectPaths:
 @click.option('--test', is_flag=True, help="Test the model")
 @click.option('--inference', is_flag=True, help="Run inference on a copernicus S1 image")
 @click.option('--config', is_flag=True, help='loading from config')
+@click.option('--fine_tune', is_flag=True, default=None, help="fine tune from training ckpt")
+@click.option('--ckpt_input', is_flag=True, default=None, help="ckpt path is 'training folder or input folder'")
 
 # //////////////////   MAIN   ///////////////////////
 
-def main(train, test, inference, config):
+def main(train, test, inference, config, fine_tune, ckpt_input):
     n = 0
     for i in train, test, inference:
         if i:
@@ -241,12 +243,14 @@ def main(train, test, inference, config):
     elif train:
         job_type = "train" 
         print("========== TRAINING MODE ==========")
+        if fine_tune:
+            logger.info("\nFINE TUNING FROM TRAINING CKPT\n")
     elif inference:
         job_type = "inference"
         print("\n" + "="*20 + "INFERENCE MODE" + "="*20 )
         logger.info("\nNEEDS TO 'MAKE TIFFS' TO ENABLE NORMALISATION. WILL NOT MAKE DATACUBE. TILE DIRECTLY FROM THE NORAMLISED TIFS.\n" + "="*50 + "\n")
     
-    logger.info(f"config =  {config}")
+    print(f"YOU ARE USING A CONFIG FILE: {config}")
 
     device = pick_device()                       
     logger.info(f" Using device: {device}")
@@ -271,7 +275,7 @@ def main(train, test, inference, config):
     #......................................................
     # CONFIGURATION PARAMETERS
     dataset_name = "sen1floods11"  # "sen1floods11" or "copernicus_floods"
-    run_name = "_"
+    run_name = "_runname"
     SINGLE_INPUT = False  # True for VV+VH input, False for single band
     input_is_linear = False   # True for copernicus direct downloads, False for Sen1floods11
     # Training parameters
@@ -306,7 +310,7 @@ def main(train, test, inference, config):
     stitched_image = None  # Will be set later based on mode
 
 
-
+    # ...........................................................
     # MODE-SPECIFIC CONFIGURATION
     if inference:
         # DO NOT CHANGE THESE 
@@ -404,13 +408,8 @@ def main(train, test, inference, config):
     if is_sweep_run():
         logger.info(" IN SWEEP MODE <<<")
     
+
     #........................................................
-    # CHECKPOINT AND PATH SETUP
-    ckpt = next(paths.ckpt_input_path.rglob("*.ckpt"), None)
-    if ckpt is None:
-        raise FileNotFoundError(f"No checkpoint found in {paths.ckpt_input_path}")
-    
-# ##################################################################
     #########    TRAIN / TEST - CREATE DATA LOADERS    #########
     if train:
         file_list_csv_path = paths.train_csv
@@ -422,7 +421,7 @@ def main(train, test, inference, config):
         image_tiles_path = training_paths['image_tiles_path']
 
     # Only delete and recreate folders for inference mode
-    logger.info(f' MAKE_TIFS = {MAKE_TIFS}, MAKE_DATAARRAY = {MAKE_DATAARRAY}, MAKE_TILES = {MAKE_TILES}   ')
+    logger.info(f'\n\nMAKE_TIFS = {MAKE_TIFS},\nMAKE_DATAARRAY = {MAKE_DATAARRAY}, \nMAKE_TILES = {MAKE_TILES}\n')
     logger.info(f'training threshold = {threshold}, tile_size = {tile_size}, stride = {stride}')
 
 
@@ -666,27 +665,22 @@ def main(train, test, inference, config):
         raise FileNotFoundError(f"CSV file does not exist / was not created: {file_list_csv_path}")
         ########     INITIALISE THE MODEL     #########
     model = UnetModel(encoder_name='resnet34', in_channels=in_channels, classes=1, pretrained=PRETRAINED).to(device)
-    # LOAD THE CHECKPOINT
-    try:
-        checkpoint = torch.load(ckpt, map_location=device)
-    except Exception as e:
-        logger.error(f"Failed to load checkpoint {ckpt}: {e}")
-        return
 
-    # EXTRACT THE MODEL STATE DICT
-    cleaned_state_dict = clean_checkpoint_keys(checkpoint["state_dict"])
 
-    # LOAD THE MODEL STATE DICT
-    try:
-        model.load_state_dict(cleaned_state_dict)
-        logger.info(f"Successfully loaded model from checkpoint: {ckpt}")
-    except Exception as e:
-        logger.error(f"Failed to load model state dict: {e}")
-        return
-# ////////////////////////////////////////////////////////////
 
+    #........................................................
     # CREATE DATALOADERS BASED ON JOB TYPE
-    if train:
+    if train and fine_tune:
+        # INPUT bool helper
+        if ckpt_input:
+            ckpt_path = next(paths.ckpt_input_path.rglob("*.ckpt"), None)
+        else:
+            # get latest checkpoint in training folder
+            ckpt_path = max(paths.ckpt_training_path.rglob("*.ckpt"), key=os.path.getctime, default=None)
+        if ckpt_path is None:
+            logger.error(f"No checkpoint found in: {paths.ckpt_input_path}")
+            return
+
         # Training dataset
         train_dataset = Sen1Dataset(
             job_type="train",
@@ -726,6 +720,16 @@ def main(train, test, inference, config):
         val_dl = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, persistent_workers=persistent_workers)
         
     elif test:
+        # INPUT bool helper
+        if ckpt_input:
+            ckpt_path = next(paths.ckpt_input_path.rglob("*.ckpt"), None)
+        else:
+            # get latest checkpoint in training folder
+            ckpt_path = max(paths.ckpt_training_path.rglob("*.ckpt"), key=os.path.getctime, default=None)
+        if ckpt_path is None:
+            logger.error(f"No checkpoint found in: {paths.ckpt_input_path}")
+            return
+
         # Test dataset
         test_dataset = Sen1Dataset(
             job_type="test",
@@ -746,6 +750,12 @@ def main(train, test, inference, config):
         test_dl = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, persistent_workers=persistent_workers)
         
     elif inference:
+
+        ckpt_path = next(paths.ckpt_input_path.rglob("*.ckpt"), None)
+        if ckpt_path is None:
+            logger.error(f"No checkpoint found in: {paths.ckpt_input_path}")
+            return
+
         logger.debug(">>>>>>>>> CREATING INFERENCE DATALOADER")
 
 
@@ -766,20 +776,40 @@ def main(train, test, inference, config):
         inference_subset = Subset(inference_dataset, subset_indices)
         
         dataloader = DataLoader(inference_subset, batch_size=batch_size, num_workers=num_workers, persistent_workers=persistent_workers, shuffle=False)
+    
+    if test or inference:
+        try:
+            ckpt = torch.load(ckpt_path, map_location=device)
+        except Exception as e:
+            logger.error(f"Failed to load checkpoint {ckpt_path}: {e}")
+            return
+        # EXTRACT THE MODEL STATE DICT
+        cleaned_state_dict = clean_checkpoint_keys(ckpt["state_dict"])
 
+        # LOAD THE MODEL STATE DICT
+        try:
+            model.load_state_dict(cleaned_state_dict)
+            print(f"CHECKPOINT->{ckpt_path.name}")
+        except Exception as e:
+            logger.error(f"Failed to load model state dict: {e}")
+            return
+
+
+    # .........................................................
+    # CHOOSE LOSS FUNCTION 
     if train or test:
-        ########.     CHOOE LOSS FUNCTION     #########
         loss_fn = loss_chooser(loss_description, config.focal_alpha, config.focal_gamma, config.bce_weight)
         early_stopping = pl.callbacks.EarlyStopping(
             monitor="val_loss",
             patience=patience,  # Stop if no improvement for 3 consecutive epochs
             mode="min",
     )
-        ###########    SETUP TRAINING LOOP    #########
-        ckpt_path = paths.ckpt_training_path
-        ckpt_path.mkdir(parents=True, exist_ok=True)
+        # .........................................................
+        # SETUP TRAINING LOOP    
+        ckpt_save_dir = paths.ckpt_training_path
+        ckpt_save_dir.mkdir(parents=True, exist_ok=True)
         checkpoint_callback = ModelCheckpoint(
-            dirpath=ckpt_path,
+            dirpath=ckpt_save_dir,
             filename=run_name,
             monitor="val_loss",
             mode="min",
@@ -835,12 +865,14 @@ def main(train, test, inference, config):
             trainer.fit(training_loop, train_dataloaders=train_dl, val_dataloaders=val_dl)
 
         elif test:
-            logger.info(f" Starting testing with checkpoint: {ckpt}")
+            logger.info(f" Starting testing with checkpoint: {ckpt_path}")
             training_loop = Segmentation_training_loop.load_from_checkpoint(
-                checkpoint_path=ckpt,  model=model, loss_fn=loss_fn, save_path=stitched_image, loss_description=loss_description
+                checkpoint_path=ckpt_path,  model=model, loss_fn=loss_fn, save_path=stitched_image, loss_description=loss_description
             )
             trainer.test(model=training_loop, dataloaders=test_dl)
 
+    # .........................................................
+    # INFERENCE LOOP
     elif inference:
 
         pred_tiles_path = inference_paths['pred_tiles_path']
@@ -855,7 +887,8 @@ def main(train, test, inference, config):
         with torch.no_grad():
             t = 1
             for imgs, valids, fnames in tqdm(dataloader, desc="Predict"):
-                logger.info(f'Processing batch {t} with {imgs.shape[0]} tiles')
+                logger.info(f'/////Processing batch {t} with {imgs.shape[0]} tiles')
+                t += 1
                 logger.info(f'images shape: {imgs.shape}, valids shape: {valids.shape}, fnames: {fnames}')
                 logger.info(f"First image filename: {fnames[0]}")
 
@@ -897,7 +930,6 @@ def main(train, test, inference, config):
 
                 with open(metadata_path, "r") as f:
                     metadata = json.load(f) 
-                logger.info(f"Metadata loaded with {len(metadata)} entries\n####/////{metadata}")
 
         # STITCH PREDICTION TILES
         input_image = next(extracted.rglob("*.tif"), None) if extracted.exists() else None
