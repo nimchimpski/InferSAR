@@ -228,6 +228,7 @@ class ProjectPaths:
 # //////////////////   MAIN   ///////////////////////
 
 def main(train, test, inference, config, fine_tune, ckpt_input):
+    print("\n" + "/"*40 + "\nRUNNING INFERSAR")
     n = 0
     for i in train, test, inference:
         if i:
@@ -235,11 +236,13 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     if n > 1 or n == 0:
         print("==========\nYOU MUST  SPECIFY ONE OF --TRAIN, --TEST OR --INFERENCE.\n==========")
         return
+    # print click options
+    print(f'\nwith flags:\n--train: {train}\n--test: {test}\n--inference: {inference}\n--config: {config}\n--fine_tune: {fine_tune}\n--ckpt_input: {ckpt_input}')    
 
     if  test:
         job_type =  "test"
-        print("========== TESTING MODE ==========")
-        logger.info(' ARE YOU TESTING THE CORRECT CKPT? <<<')
+        print("\n========== TESTING MODE ==========")
+        print('\ntesting ckpt in INPUT folder\n')
     elif train:
         job_type = "train" 
         print("========== TRAINING MODE ==========")
@@ -249,8 +252,6 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         job_type = "inference"
         print("\n" + "="*20 + "INFERENCE MODE" + "="*20 )
         logger.info("\nNEEDS TO 'MAKE TIFFS' TO ENABLE NORMALISATION. WILL NOT MAKE DATACUBE. TILE DIRECTLY FROM THE NORAMLISED TIFS.\n" + "="*50 + "\n")
-    
-    print(f"YOU ARE USING A CONFIG FILE: {config}")
 
     device = pick_device()                       
     logger.info(f" Using device: {device}")
@@ -421,7 +422,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         image_tiles_path = training_paths['image_tiles_path']
 
     # Only delete and recreate folders for inference mode
-    logger.info(f'\n\nMAKE_TIFS = {MAKE_TIFS},\nMAKE_DATAARRAY = {MAKE_DATAARRAY}, \nMAKE_TILES = {MAKE_TILES}\n')
+    print(f'.........................\nMAKE_TIFS = {MAKE_TIFS},\nMAKE_DATAARRAY = {MAKE_DATAARRAY}, \nMAKE_TILES = {MAKE_TILES}\n..........................')
     logger.info(f'training threshold = {threshold}, tile_size = {tile_size}, stride = {stride}')
 
 
@@ -723,6 +724,8 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         # INPUT bool helper
         if ckpt_input:
             ckpt_path = next(paths.ckpt_input_path.rglob("*.ckpt"), None)
+            logger.info('ckpt path = ' + str(ckpt_path))
+
         else:
             # get latest checkpoint in training folder
             ckpt_path = max(paths.ckpt_training_path.rglob("*.ckpt"), key=os.path.getctime, default=None)

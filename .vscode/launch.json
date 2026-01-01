@@ -27,7 +27,7 @@
             "args": ["--test"]
         },
         {
-            "name": "Python: Test Mode",
+            "name": "Test Mode (input ckpt",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/scripts/run_master_new.py",
@@ -36,6 +36,6 @@
                 "--test",
                 "--ckpt_input"  // Add this to use the INPUT checkpoint
             ]
-        },
+        }
     ]
 }
