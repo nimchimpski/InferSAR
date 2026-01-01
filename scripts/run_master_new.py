@@ -5,14 +5,16 @@ This script uses a centralized ProjectPaths class to manage all directory and fi
 making the code more maintainable and easier to understand.
 
 Usage:
-    python run_master_copy.py --train    # Train the model
-    python run_master_copy.py --test     # Test the model  
-    python run_master_copy.py --inference # Run inference
-    python run_master_copy.py --config   # Use config file
+    python run_master_new.py --train    # Train the model
+    python run_master_new.py --test     # Test the model  
+    python run_master_new.py --inference # Run inference
+    python run_master_new.py --config   # Use config file
+    python run_master_new.py --fine_tune # Fine-tune from training checkpoint
+    python run_master_new.py --ckpt_input # Specify checkpoint input folder
 """
 import logging
 logging.basicConfig(
-    level=logging.INFO, 
+    level=logging.WARNING, 
     force=True,                           
     format=" %(levelname)-8s %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S")
@@ -35,7 +37,7 @@ import sys
 # import handle interupt
 import signal
 import json
-
+import warnings
 # .............................................................
 import torch
 import torch.nn as nn
@@ -79,6 +81,8 @@ from scripts.inference_functions import make_prediction_tiles, stitch_tiles, cle
 
 start = time.time()
 
+# Suppress num_workers warning - we've tested and num_workers=0 is optimal for our dataset
+warnings.filterwarnings('ignore', '.*does not have many workers.*')
 
 logging.getLogger('scripts.process.process_helpers').setLevel(logging.INFO)
 logging.getLogger('scripts.train.train_classess').setLevel(logging.INFO)
@@ -285,7 +289,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     max_epoch = 15
     early_stop = True
     patience = 3
-    num_workers = 0 # 8 TODO
+    num_workers = 0 # //////////////////////////
     threshold = 0.5  # Default threshold for training
     # Logging and model parameters
     WandB_online = True
@@ -422,7 +426,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         image_tiles_path = training_paths['image_tiles_path']
 
     # Only delete and recreate folders for inference mode
-    print(f'.........................\nMAKE_TIFS = {MAKE_TIFS},\nMAKE_DATAARRAY = {MAKE_DATAARRAY}, \nMAKE_TILES = {MAKE_TILES}\n..........................')
+    print(f'.........................\nMAKE_TIFS = {MAKE_TIFS},\nMAKE_DATAARRAY = {MAKE_DATAARRAY}, \nMAKE_TILES = {MAKE_TILES}\n')
     logger.info(f'training threshold = {threshold}, tile_size = {tile_size}, stride = {stride}')
 
 
@@ -724,7 +728,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         # INPUT bool helper
         if ckpt_input:
             ckpt_path = next(paths.ckpt_input_path.rglob("*.ckpt"), None)
-            logger.info('ckpt path = ' + str(ckpt_path))
+            logger.debug('ckpt path = ' + str(ckpt_path))
 
         else:
             # get latest checkpoint in training folder
@@ -792,7 +796,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         # LOAD THE MODEL STATE DICT
         try:
             model.load_state_dict(cleaned_state_dict)
-            print(f"CHECKPOINT->{ckpt_path.name}")
+            print(f"\nCHECKPOINT:  {ckpt_path.name}\n")
         except Exception as e:
             logger.error(f"Failed to load model state dict: {e}")
             return
@@ -868,7 +872,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
             trainer.fit(training_loop, train_dataloaders=train_dl, val_dataloaders=val_dl)
 
         elif test:
-            logger.info(f" Starting testing with checkpoint: {ckpt_path}")
+            logger.debug(f" Starting testing.....")
             training_loop = Segmentation_training_loop.load_from_checkpoint(
                 checkpoint_path=ckpt_path,  model=model, loss_fn=loss_fn, save_path=stitched_image, loss_description=loss_description
             )
@@ -947,13 +951,13 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
 
     # Cleanup
     run_time = (time.time() - start) / 60
-    logger.info(f" Total runtime: {run_time:.2f} minutes")
+    print(f" Total runtime: {run_time:.2f} minutes")
     wandb.finish()
     if device.type == "cuda":
         torch.cuda.empty_cache()
 
     end = time.time()
-    logger.info(f"Time taken: {((end - start) / 60):.2f} minutes")
+    print(f"Time taken inc wand sync: {((end - start) / 60):.2f} minutes")
 
 if __name__ == '__main__':
     main()

@@ -293,7 +293,7 @@ class Sen1Dataset(Dataset):
                     self.mask_paths.append(mask_path / mask_name)
 
 
-        logger.info(f"Found {len(self.img_paths)} images in {csv_path}")
+        logger.info(f"Found {len(self.img_paths)} images")
         logger.debug(f'imgs_paths: {self.img_paths}   ')
         # sanity check
         if job_type in ("train","val"):
@@ -668,6 +668,8 @@ class Segmentation_training_loop(pl.LightningModule):
             # plt.tight_layout()  
             examples.append(wandb.Image(fig, caption= f'{i} {fname}'))
 
+            plt.close(fig)  # Close the figure to free memory
+
         # Log to WandB and add title
         self.logger.experiment.log({"examples": examples} )  
 
@@ -738,7 +740,7 @@ class Segmentation_training_loop(pl.LightningModule):
                 logger.warning("---  2. Dataset is heavily imbalanced")
                 logger.warning("---  3. Wrong subset_fraction setting")
                 auc_pr = 0.0  # Default value when AUC-PR cannot be calculated
-                self.log('val_auc_pr', auc_pr, prog_bar=True, logger=True)
+                self.log('val_auc_pr', auc_pr, prog_bar=True, logger=True, batch_size=len(all_logits))
                 return
             
             try:
@@ -757,7 +759,7 @@ class Segmentation_training_loop(pl.LightningModule):
                 auc_pr = 0.0  # Default value for invalid AUC-PR
 
             # Log the final AUC-PR
-            self.log('val_auc_pr', auc_pr, prog_bar=True, logger=True)
+            self.log('val_auc_pr', auc_pr, prog_bar=True, logger=True, batch_size=len(all_logits))
         else:
         #     logger.info(f"---Skipping AUC-PR calculation for epoch: {self.current_epoch}")
             self.validation_outputs = []
@@ -817,14 +819,14 @@ class Segmentation_training_loop(pl.LightningModule):
 
 
         # Log AUC-PR for the test set
-        self.log('auc_pr_test', auc_pr, prog_bar=True, logger=True)
+        self.log('auc_pr_test', auc_pr, prog_bar=True, logger=True, batch_size=len(all_logits))
 
     def metrics_maker(self, logits, masks, valid, job_type, loss, loss_description, lr=None):
   
         mthresh = 0.5
         probs = torch.sigmoid(logits) 
-
         preds = (probs > mthresh).int()
+        batch_size = logits.shape[0]
         # logger.info(f'---metric threshod={mthresh}')
         if valid.sum() == 0:
         # skip batch that contains only ignore pixels
@@ -852,17 +854,17 @@ class Segmentation_training_loop(pl.LightningModule):
 
         # Logging
         if job_type == 'train':
-            self.log('train_loss', loss, prog_bar=True, on_step=True, on_epoch=True)
-            self.log('train_lr', lr, on_step=False, on_epoch=True, prog_bar=False, logger=True)
+            self.log('train_loss', loss, prog_bar=True, on_step=True, on_epoch=True, batch_size=batch_size)
+            self.log('train_lr', lr, on_step=False, on_epoch=True, prog_bar=False, logger=True, batch_size=batch_size)
         elif job_type == 'val':
-            self.log('val_loss', loss, prog_bar=True, on_step=True, on_epoch=True)
+            self.log('val_loss', loss, prog_bar=True, on_step=True, on_epoch=True, batch_size=batch_size)
 
         if not job_type == 'train':
-            self.log(f'iou_{job_type}', ioumean, prog_bar=True, on_step=False, on_epoch=True)
-            self.log(f'precision_{job_type}', precisionmean, prog_bar=True, on_step=False, on_epoch=True )
-            self.log(f'recall_{job_type}', recallmean, prog_bar=True, on_step=False, on_epoch=True)
-            self.log(f'f1_{job_type}', f1mean, prog_bar=True, on_step=False, on_epoch=True )
-            self.log(f'thresh_{job_type}', mthresh)
+            self.log(f'iou_{job_type}', ioumean, prog_bar=True, on_step=False, on_epoch=True, batch_size=batch_size)
+            self.log(f'precision_{job_type}', precisionmean, prog_bar=True, on_step=False, on_epoch=True, batch_size=batch_size )
+            self.log(f'recall_{job_type}', recallmean, prog_bar=True, on_step=False, on_epoch=True, batch_size=batch_size)
+            self.log(f'f1_{job_type}', f1mean, prog_bar=True, on_step=False, on_epoch=True, batch_size=batch_size )
+            self.log(f'thresh_{job_type}', mthresh, batch_size=batch_size)
             # Precision-Recall Curve Logging (Binary Classification)
             # wandb_pr = wandb.plot.pr_curve(masks, probs, title=f"Precision-Recall Curve {job_type}")
             # self.log({"pr": wandb_pr})
