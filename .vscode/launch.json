@@ -5,7 +5,7 @@
             "name": "Inference Mode",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/scripts/run_master_new.py",
+            "program": "${workspaceFolder}/scripts/run_master.py",
             "console": "integratedTerminal",
             "args": ["--inference"],
             "justMyCode": false
@@ -14,7 +14,7 @@
             "name": "Train Mode",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/scripts/run_master_new.py",
+            "program": "${workspaceFolder}/scripts/run_master.py",
             "console": "integratedTerminal",
             "args": ["--train"]
         },
@@ -22,7 +22,7 @@
             "name": "Test Mode",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/scripts/run_master_new.py",
+            "program": "${workspaceFolder}/scripts/run_master.py",
             "console": "integratedTerminal",
             "args": ["--test"]
         },
@@ -30,7 +30,7 @@
             "name": "Test Mode (input ckpt",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/scripts/run_master_new.py",
+            "program": "${workspaceFolder}/scripts/run_master.py",
             "console": "integratedTerminal",
             "args": [
                 "--test",

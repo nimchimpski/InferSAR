@@ -1,6 +1,6 @@
 {
-    "hh": {
-        "min": 0,
-        "max": 255
+    "global_minmax": {
+        "db_min": -90,
+        "db_max": 37
     }
 }

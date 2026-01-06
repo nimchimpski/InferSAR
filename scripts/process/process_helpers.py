@@ -124,6 +124,7 @@ def compute_dataset_minmax(dataset, band_to_read=1):
 
 def compute_traintiles_minmax(dataset, band_to_read=1):
     """
+    Works on both sigle large image or folder of tiles.
     Computes the global minimum and maximum pixel values for a dataset.
     
     Parameters:
@@ -133,26 +134,38 @@ def compute_traintiles_minmax(dataset, band_to_read=1):
         global_min (float): Global minimum pixel value.
         global_max (float): Global maximum pixel value.
     """
-    logger.info('+++in compute_dataset_minmax')
+    # logger.info('+++in compute_dataset_minmax')
     global_min = float('inf')
     global_max = float('-inf')
     
     # Iterate through all image files in each event
-    for image in dataset.iterdir(): # ITER EVENT
+    ok=0
+    tiles=0
+    for image in dataset.iterdir():
+        if image.is_file() and image.suffix.lower() in ['.tif', '.tiff']:
 
+            tiles+=1
+            # logger.info(f"---Processing {image.name}")
+            try:
+                with rasterio.open(image) as src:
+                    # Read the data as a NumPy array
+                    data = src.read(band_to_read)  # Read the first band
+                    valid_data = data[np.isfinite(data)]  # create new np array excluding NaN values
+                    if len(valid_data) == 0:
+                        logger.info(f"---All values are NaN in {image.name}, skipping...")
+                        continue
+                    lmin, lmax = int(valid_data.min()), int(valid_data.max())
+                # logger.info(f"local: Min: {lmin}, Max: {lmax}")
+                global_min = min(global_min, lmin)
+                global_max = max(global_max, lmax)
+                # logger.info(f'---global_min={global_min}, global_max={global_max}')
+                ok+=1
+            except Exception as e:
+                logger.info(f"Error processing {image}: {e}")
+                continue
 
-        # logger.info(f"---Processing {image.name}")
-        try:
-            lmin, lmax = compute_image_minmax(image, band_to_read)
-            logger.info(f"local: Min: {lmin}, Max: {lmax}")
-            global_min = min(global_min, lmin)
-            global_max = max(global_max, lmax)
-            logger.info(f'---global_min={global_min}, global_max={global_max}')
-        except Exception as e:
-            logger.info(f"Error processing {image}: {e}")
-            continue
-
-    logger.info(f"Global Min: {global_min}, Global Max: {global_max}")
+    # logger.info(f"Global Min: {global_min}, Global Max: {global_max}")
+    print(f"---num tiles processed= {ok} out of {tiles}")
     return global_min, global_max
 
 '''
@@ -196,7 +209,7 @@ def write_minmax_to_json(min, max, output_path):
 
     # Write the dictionary to the JSON file
     with open(output_path, 'w') as json_file:
-        json.dump({'hh': {'min': min, 'max' : max}}, json_file, indent=4)
+        json.dump({'global_minmax': {'db_min': min, 'db_max' : max}}, json_file, indent=4)
     
     logger.info(f"Min and max values saved to {output_path}")
 
@@ -206,16 +219,6 @@ def read_minmax_from_json(input_path):
         data = json.load(json_file)
     return data.get("hh", {})
 
-
-def compute_image_minmax(image, band_to_read=1):
-    with rasterio.open(image) as src:
-        # Read the data as a NumPy array
-        data = src.read(band_to_read)  # Read the first band
-        lmin, lmax = int(data.min()), int(data.max())
-        logger.info(f"---{image.name}: Min: {data.min()}, Max: {data.max()}")
-        # get image size in pixels
-        logger.info(f"---: Shape: {data.shape}")
-    return lmin, lmax
 
 def normalize_imagedata_0( data, glob_max, loc_max):
         data = data * glob_max / loc_max
@@ -331,7 +334,7 @@ def pad_tile(tile, expected_size=250, pad_value=0):
 # CHECKS FOR  *MULTIBAND TIFS* TILES
 
 def print_tiff_info_TSX( image):
-    logger.info(f'+++ logger.info TIFF INFO ---{image.name}')
+    print(f'+++ print TIFF INFO ---{image.name}')
 
     with rasterio.open(image) as src:
         data = src.read()
@@ -342,16 +345,16 @@ def print_tiff_info_TSX( image):
             min, max = min_max_vals(band_data)
             name = get_band_name(i, src)
             numvals =  num_band_vals(band_data)
-            logger.info(f"Band count:    {src.count}")
-            logger.info(f"---Band {name}: Min={min}, Max={max}")
-            logger.info(f"---num unique vals = {numvals}")
-            logger.info(f"---CRS: {src.crs}")
-            logger.info(f"Width×Height:  {src.width} × {src.height}")
-            logger.info(f"Transform:     {src.transform}")
+            print(f"Band count:    {src.count}")
+            print(f"---Band {name}: Min={min}, Max={max}")
+            print(f"---num unique vals = {numvals}")
+            print(f"---CRS: {src.crs}")
+            print(f"Width×Height:  {src.width} × {src.height}")
+            print(f"Transform:     {src.transform}")
             px, py = src.res
-            logger.info(f"Pixel size:    {px} × {py}")
-            logger.info(f"Data type:     {src.dtypes[0]}")
-            logger.info(f'---resolution= {src.res}')
+            print(f"Pixel size:    {px} × {py}")
+            print(f"Data type:     {src.dtypes[0]}")
+            print(f'---resolution= {src.res}')
         
 def check_single_tile(tile):
     with rasterio.open(tile) as src:

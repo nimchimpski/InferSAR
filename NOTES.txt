@@ -10,11 +10,10 @@ Then choose single or multiband input
 
 input = VV + VH tifs
 MAKE_TILES = True
+- as we didnt create a datacube, conditiponaly tile direct from normalised Tifs
 - this where input images are normalised.
 MAKE_DATACUBE = False
 - this is too expensive
-MAKE_TILES = True
-- as we didnt create a datacube, conditiponaly tile direct from normalised Tifs
 
 
 

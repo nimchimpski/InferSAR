@@ -9,9 +9,9 @@ from scripts.process.process_helpers import get_band_name, min_max_vals, num_ban
 
 def main():
     print('++++++++++SINGLE TILE CHECK+++++++++++++X')
-    tile_path = Path(r"C:\Users\floodai\UNOSAT_FloodAI_v2\1data\4final\train_INPUT\TSX8_res3.25_norm3200_mt0.1_pcu0.25\train\tile_695958835_1_extracted_256_256.tif")
+    tile_path = Path("data/4final/predictions/tiles/tile_0006_512_512.tif")
     # check_single_tile(tile_path)
-    print_tiff_info_TSX(tile_path,1)
+    print_tiff_info_TSX(tile_path,)
 
                 
 if __name__ == "__main__":

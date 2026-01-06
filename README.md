@@ -12,6 +12,8 @@ A   parameterized tile selection process   was trialled and partially implemente
 ### Directory Structure:   
 The new pipeline is structured as a Python package  with modular scripts.  
 
+Scripts is organized into reusable modules (process/, train/) and development scripts (run_process/, run_train/) that utilize them, with run_master_new.py serving as the primary entry point.
+
 ### Logging:   
 Integrated with   WandB   for detailed tracking of training metrics, including AUC-PR, F1, IoU, Precision, and Recall, as well plots and visualizations of prediction outputs compared to ground truths.
 
@@ -48,6 +50,9 @@ The final class balance decided on was 0.25 (majority non flood).
 Results indicate one should aim to have a class ratio that best matches that which is most probable in the inference data. The converse was shown;  a massively flooded inference SAR image (ratio 0.85 ) was one of the problem inputs, with the model showing confused predictions.
 
 Earlier the Test (evaluation) step were done using a subset of the data used for training - a fairly common technique. Using a 0.7, 0.15, 0.15 train/validate/test split, it was found that by introducing a large amount of tiles featuring mountain terrain coupled with zero flood ground truth labels, the model could effectively be taught that that ‘mountain shadow’ was not water (a persistent problem). This needs to be tested using K-fold / hold-1-region method. 
+
+KEY NOTE:
+there was a ~20% failure rate - garbage  image outputs, starkly different to most. This looks strongly likely to be differences in  incidence angles or other senor params, which were not made clear in the data aquisition for inference jobs. This is a key point that needs examining. 
 
 ## USING InferSAR TO ANALYZE AN IMAGE - 
 

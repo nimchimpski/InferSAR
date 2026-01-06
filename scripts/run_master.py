@@ -78,6 +78,7 @@ from scripts.train.train_helpers import is_sweep_run, pick_device
 from scripts.train.train_classes import  UnetModel,   Segmentation_training_loop, Sen1Dataset
 from scripts.train.train_functions import  loss_chooser, wandb_initialization, job_type_selector, create_subset
 from scripts.inference_functions import make_prediction_tiles, stitch_tiles, clean_checkpoint_keys, create_inference_csv, write_df_to_csv
+from scripts.paths_class import ProjectPaths
 
 start = time.time()
 
@@ -91,135 +92,6 @@ os.environ['KMP_DUPLICATE_LIB_OK'] = "True"
 
 # Register signal handler for SIGINT (Ctrl+C)
 signal.signal(signal.SIGINT, handle_interrupt)
-
-class ProjectPaths:
-    """Centralized path management for the flood detection project"""
-
-    def __init__(self, project_path: Path):
-        self.project_path = project_path
-        self._image_code = None
-        
-        # Main working directories
-        self.dataset_path = self.project_path / "data" /  "4final" / "dataset"
-        self.training_path = self.project_path / "data" / "4final" / "training"
-        self.predictions_path = self.project_path / "data" / "4final" / 'predictions'
-        self.test_path = self.project_path / "data" / "4final" / "testing"
-        
-        # Data subdirectories
-        self.images_path = self.dataset_path / 'S1Hand'
-        self.labels_path = self.dataset_path / 'LabelHand'
-        
-        # CSV files
-        self.train_csv = self.dataset_path / "flood_train_data.csv"
-        self.val_csv = self.dataset_path / "flood_valid_data.csv"
-        self.test_csv = self.dataset_path / "flood_test_data.csv"
-        
-        # Checkpoint directories (consolidated)
-        self.ckpt_input_path = project_path / "checkpoints" / 'ckpt_input'
-        self.ckpt_training_path = self.project_path / "checkpoints" / "ckpt_training"
-        
-        # Config files
-        self.main_config = project_path / "configs" / "floodaiv2_config.yaml"
-        self.minmax_config = project_path / "configs" / "global_minmax_INPUT" / "global_minmax.json"
-        
-        # Environment file
-        self.env_file = self.project_path / ".env"
-
-    @property
-    def image_code(self) -> str:
-        if self._image_code is None:  
-            predict_input = self.project_path / "data" / "4final" / "predict_input"
-            # DEFINE PREDICT_INPUT
-            if not predict_input.exists():
-                raise FileNotFoundError(f"Predict input not found: {predict_input}")
-            # FIND THE INPUT IMAGE TO EXTRACT IMAGE CODE
-            input_names = [f for f in predict_input.iterdir() 
-                           if f.is_file() 
-                           and not f.name.startswith('.') 
-                           and f.suffix.lower() in ['.tif', '.tiff']]
-            if input_names:
-                # extract file name
-                splits = input_names[0].stem.split('_')
-                raw_code = '_'.join(splits[:2])
-                # Sanitize: replace colons with hyphens or underscores 
-                self._image_code = raw_code.replace(':', '-')  # ← ADD THIS   
-     
-
-            # OTHERWISE GET IT FROM THE TILE FOLDER NAME
-            else:
-                logger.info(f"No '.tif' imput image found in {predict_input}\nso looking  in tile folder name in {self.predictions_path} for image_code...")
-   
-
-                tile_folders = [f for f in self.predictions_path.iterdir() if not f.name.startswith('.') and  f.is_dir() and "tiles" in f.name.lower()]
-
-                if not tile_folders:
-                    raise FileNotFoundError(f"No input files or tile folders found in {self.predictions_path}")
-                # Extract image code from folder name
-                # e.g., "Ghana_313799_tiles" -> "Ghana_313799"
-                folder_name = tile_folders[0].name
-                self._image_code = folder_name.replace("_tiles", "")
-                logger.info(f"Extracted image_code from pre-tiled folder: {self._image_code}")
-        return self._image_code
-
- 
-
-    
-    def get_inference_paths(self, sensor: str = 'sensor', date: str = 'date', tile_size: int =512, threshold: float = 0.5, output_filename: str = '_name') -> dict:
-        # GRAB OUTPUT_FILENAME
-      
-        image_tiles_path = self.predictions_path / f'tiles'
-        return {
-            'predict_input_path': self.project_path / "data" / "4final" / "predict_input",
-            'pred_tiles_path': self.predictions_path / f'{output_filename}_predictions',
-            'image_tiles_path': image_tiles_path,
-            'extracted_path': self.predictions_path / 'extracted',
-            'file_list_csv_path': self.predictions_path / "predict_tile_list.csv",
-            'stitched_image': self.predictions_path / f'{sensor}_{self.image_code}_{date}_{tile_size}_{threshold}_{output_filename}_WATER_AI.tif',
-            'metadata_path': image_tiles_path / 'tile_metadata.json'
-        }
-    
-    def get_training_paths(self):
-        """Get training/testing specific paths"""
-        return {
-            'image_tiles_path': self.dataset_path,
-            'metadata_path': self.dataset_path / 'tile_metadata_pth.json'
-        }
-    
-    def validate_paths(self, job_type: str):
-        """Validate that required paths exist for the given job type"""
-        errors = []
-        required_paths = []
-        if job_type in ('train', 'test'):
-            required_paths = [
-                (self.dataset_path, "Dataset directory"),
-                (self.images_path, "Images directory"),
-                (self.labels_path, "Labels directory"),
-            ]
-            
-            if job_type == 'train':
-                required_paths.extend([
-                    (self.train_csv, "Training CSV"),
-                    (self.val_csv, "Validation CSV")
-                ])
-            elif job_type == 'test':
-                required_paths.append((self.test_csv, "Test CSV"))
-                
-        elif job_type == 'inference':
-            # Inference paths are created dynamically, less validation needed
-            pass
-            
-        # Always check checkpoint folder
-        required_paths.append((self.ckpt_input_path, "Checkpoint input directory"))
-        
-        for path, description in required_paths:
-            if not path.exists():
-                errors.append(f"{description} not found: {path}")
-        
-        # Check for checkpoint files
-        if not any(self.ckpt_input_path.rglob("*.ckpt")):
-            errors.append(f"No checkpoint files found in: {self.ckpt_input_path}")
-            
-        return errors
 
 @click.command()
 @click.option('--train', is_flag=True,  help="Train the model")
@@ -250,11 +122,12 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     elif train:
         job_type = "train" 
         print("========== TRAINING MODE ==========")
+ 
         if fine_tune:
             logger.info("\nFINE TUNING FROM TRAINING CKPT\n")
     elif inference:
         job_type = "inference"
-        print("\n" + "="*20 + "INFERENCE MODE" + "="*20 )
+        print("\n" + "="*20 + "\nINFERENCE MODE\n" + "="*20 )
         logger.info("\nNEEDS TO 'MAKE TIFFS' TO ENABLE NORMALISATION. WILL NOT MAKE DATACUBE. TILE DIRECTLY FROM THE NORAMLISED TIFS.\n" + "="*50 + "\n")
 
     device = pick_device()                       
@@ -281,11 +154,11 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     # CONFIGURATION PARAMETERS
     dataset_name = "sen1floods11"  # "sen1floods11" or "copernicus_floods"
     run_name = "_runname"
-    SINGLE_INPUT = False  # True for VV+VH input, False for single band
-    input_is_linear = False   # True for copernicus direct downloads, False for Sen1floods11
+    SINGLE_INPUT = False # True for dual band VV+VH input, False for single band
+    input_is_linear = True  # True for copernicus direct downloads, False for Sen1floods11
     # Training parameters
     subset_fraction = 1
-    batch_size = 8
+    batch_size = 8 # 8 is tested as optimal for the macbook
     max_epoch = 15
     early_stop = True
     patience = 3
@@ -303,20 +176,30 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     focal_gamma = 8
     bce_weight = 0.35 # FOR BCE_DICE
     # Data processing parameters
-    db_min = -30.0
-    db_max = 0.0
+    # db_min = None
+    # db_max = None
     tile_size = 512
     stride = tile_size
     # Processing flags - default to False, set to True in specific modes
+    TRAINING_DATA_PRETILED = True
+
+    # Initialize variables
+    stitched_image = None  # Will be set later based on mode
+    # INFERENCE CONFIGURATION
+    output_filename = '_rhone_leman'
+    # sensor = 'S1'
+    # date= '030126'
+    threshold = 0.5
+    # ........................................................
+    print("="*20 +f'\nINPUT IS LINEAR = {input_is_linear}\n' + "."*20)
+    print("="*20 +f'\nSINGLE INPUT = {SINGLE_INPUT}\n' + "."*20)
+    
     MAKE_TIFS = None # INFERENCE NEEDS THIS
     MAKE_DATAARRAY = None # INFERENCE DOES NOT NEED THIS
     MAKE_TILES = None # INFERENCE NEEDS THIS
-    # Initialize variables
-    stitched_image = None  # Will be set later based on mode
-
-
-    # ...........................................................
-    # MODE-SPECIFIC CONFIGURATION
+    if TRAINING_DATA_PRETILED:
+        logger.info(" USING PRE-TILED TRAINING DATASET ")
+        MAKE_TIFS = False
     if inference:
         # DO NOT CHANGE THESE 
         MAKE_TIFS = True
@@ -326,31 +209,27 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         shuffle = False
         # DEFINE INFERENCE PATHS
         inference_paths = paths.get_inference_paths(
-            sensor='sensor', 
-            date='date', 
             tile_size=tile_size, 
             threshold=threshold,
-            output_filename= '_name'
+            output_filename=output_filename
         )
         file_list_csv_path = inference_paths['file_list_csv_path']
         image_tiles_path = inference_paths['image_tiles_path']
         extracted = inference_paths['extracted_path']
         metadata_path = inference_paths['metadata_path']
-        print('\n' + '='*50 + '\nCHECK THESE PATHS ARE CORRECT FOR YOUR SETUP')
-        for p in inference_paths:
-            path_value = inference_paths[p]
-            display_path = path_value.relative_to(project_path / 'data' / '4final') if isinstance(path_value, Path) else path_value
-            print(f'\n{p}: {display_path}')
-        print('='*50)
+        # print('\n' + '='*50 + '\nCHECK THESE PATHS ARE CORRECT FOR YOUR SETUP')
+        # for p in inference_paths:
+        #     path_value = inference_paths[p]
+        #     display_path = path_value.relative_to(project_path / 'data' / '4final') if isinstance(path_value, Path) else path_value
+        #     print(f'\n{p}: {display_path}')
+        # print('='*50)
 
-        input_is_linear = True  # NEEDS TO BE EXACT SAME AS TRAINING. S1 COPERNICUS IS LINEAR, s1floods11 IS NOT
-        threshold = 0.5
         image_code = paths.image_code
         logger.info(f"Image code: {image_code}")
     
         working_path = paths.predictions_path
         stitched_image = inference_paths['stitched_image']
-
+        stitched_image = working_path /  f'{dataset_name}_{timestamp}_{tile_size}_{threshold}_{output_filename}.tif'
         if stitched_image.exists():
             logger.info(f"overwriting existing file! : {stitched_image}")
 
@@ -408,6 +287,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
 
     run_name = f"{dataset_name}_{timestamp}_BS{config.batch_size}_s{config.subset_fraction}_{loss_desc}"  
     wandb.run.name = run_name
+
     # wandb.run.save()
 
     if is_sweep_run():
@@ -415,7 +295,22 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     
 
     #........................................................
-    #########    TRAIN / TEST - CREATE DATA LOADERS    #########
+
+    # Load dataset statistics (calculated beforehand)
+    stats_file = paths.project_path / 'configs' / 'global_minmax_INPUT' / 'global_minmax.json'
+    if stats_file.exists():
+        with open(stats_file, 'r') as f:
+            stats = json.load(f)
+        db_min = stats['global_minmax']['db_min']
+        db_max = stats['global_minmax']['db_max']
+        logger.info(f"Loaded dataset stats: db_min={db_min:.2f}, db_max={db_max:.2f}")
+        print(F'\n............................\nUSING GLOBAL dB MIN {db_min} AND dB MAX {db_max}\n')
+    else:
+        logger.warning(f"No dataset statistics found at {stats_file}")
+        logger.warning(f"Using hardcoded db_min={db_min}, db_max={db_max}")
+        logger.warning("Consider running scan_dataset_minmax() first!")
+
+    #.......TRAIN / TEST - CREATE DATA LOADERS........
     if train:
         file_list_csv_path = paths.train_csv
         training_paths = paths.get_training_paths()
@@ -426,11 +321,12 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         image_tiles_path = training_paths['image_tiles_path']
 
     # Only delete and recreate folders for inference mode
-    print(f'.........................\nMAKE_TIFS = {MAKE_TIFS},\nMAKE_DATAARRAY = {MAKE_DATAARRAY}, \nMAKE_TILES = {MAKE_TILES}\n')
+    print(f'\nMAKE_TIFS = {MAKE_TIFS},\nMAKE_DATAARRAY = {MAKE_DATAARRAY}, \nMAKE_TILES = {MAKE_TILES}\n')
     logger.info(f'training threshold = {threshold}, tile_size = {tile_size}, stride = {stride}')
 
 
     if MAKE_TIFS:
+        # CREATES 2 SEPARATE TIFS IN EXTRACTED DIR, FOR VV AND VH CHANNELS (OR COPIES IF ALREADY SEPARATE)
         logger.info('EXTRACTING VV AND VH CHANNELS')
         predict_input = inference_paths['predict_input_path']
 
@@ -498,7 +394,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
                 logger.info(f"wrote VV tif at vv_image_path: {vv_image_path}")
                 logger.info(f"wrote VH tiff at vh_image_path: {vh_image_path}")
         else:
-            print('=====DUAL IMAGE INPUT======')
+            print("="*20 + "\nDUAL IMAGE INPUT")
             vv_image_path = None
             vh_image_path = None
 
@@ -595,16 +491,10 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
             raise FileNotFoundError(f"No data cube found in {extracted}")
 
     if MAKE_TILES:
-        print(f'=========== MAKING TILES =========')
+        print(f'='*20 + '\nMAKING TILES')
         if inference:
             # INFERENCE: Tile directly from GeoTIFF (no datacube needed)
             logger.info("Tiling directly from GeoTIFF for inference")
-
-            # Get the VV or VH image (either works for georeferencing)
-            # vv_image_path = next(extracted.glob("*_VV.tif"), None)
-            # if not vv_image_path or not vv_image.exists():
-            #     logger.error(f"VV image not found in {extracted}")
-            #     raise FileNotFoundError(f"VV image not found in {extracted}")
 
             if image_tiles_path.exists():
                 logger.info(f"Deleting existing inference tiles: {image_tiles_path}")
@@ -671,10 +561,9 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         ########     INITIALISE THE MODEL     #########
     model = UnetModel(encoder_name='resnet34', in_channels=in_channels, classes=1, pretrained=PRETRAINED).to(device)
 
-
-
     #........................................................
     # CREATE DATALOADERS BASED ON JOB TYPE
+    # EXISTING CKPTSONLY NEEDED FOR FINETUNING
     if train and fine_tune:
         # INPUT bool helper
         if ckpt_input:
@@ -685,7 +574,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         if ckpt_path is None:
             logger.error(f"No checkpoint found in: {paths.ckpt_input_path}")
             return
-
+    elif train:
         # Training dataset
         train_dataset = Sen1Dataset(
             job_type="train",

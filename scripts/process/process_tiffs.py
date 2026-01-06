@@ -920,12 +920,12 @@ def align_image_to_mask(sar_image, mask, aligned_image):
 
 #  TILING
 def tile_geotiff_directly(vv_image: Path, vh_image: Path, output_path: Path, 
-                         tile_size: int = 512, stride: int = 512) -> tuple:
+                         tile_size: int = 512, stride: int = 512, db_min=-30.0, db_max=0.0) -> tuple:
     """
     Tile VV and VH GeoTIFFs directly without creating datacube.
     More efficient for inference.
     
-    Returns:
+    Returns Tuple of:
         tiles: List of tile paths
         metadata: Dict with tile info for stitching
     """
