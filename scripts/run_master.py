@@ -705,6 +705,9 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     # CHOOSE LOSS FUNCTION 
     if train or test:
         loss_fn = loss_chooser(loss_description, config.focal_alpha, config.focal_gamma, config.bce_weight)
+        
+
+        
         early_stopping = pl.callbacks.EarlyStopping(
             monitor="val_loss",
             patience=patience,  # Stop if no improvement for 3 consecutive epochs

@@ -77,7 +77,7 @@ def handle_interrupt(signal, frame):
     sys.exit(0)
 
 
-def loss_chooser(loss_name, alpha=0.25, gamma=2.0, bce_weight=0.5):
+def loss_chooser(loss_name, alpha=0.25, gamma=2.0, bce_weight=0.5, device=None):
     '''
     Returns a loss function for binary flood segmentation.
     
@@ -99,26 +99,10 @@ def loss_chooser(loss_name, alpha=0.25, gamma=2.0, bce_weight=0.5):
         gamma (float): Focusing parameter for Focal Loss - higher = more focus on hard examples (default 2.0)
         bce_weight (float): Weight for BCE component in bce_dice combo (default 0.5)
                            E.g., 0.35 = 35% BCE + 65% Dice
-    
+        device (torch.device): Device to place loss function on (for pos_weight tensor)
     Returns:
         callable: Loss function that takes (predictions, targets) and returns scalar loss
     '''
-
-    if loss_name == "focal":
-        logger.info(f'---alpha: {alpha}, gamma: {gamma}---')  
-
-    torch_bce = torch.nn.BCEWithLogitsLoss()
-
-    smp_bce =  smp.losses.SoftBCEWithLogitsLoss(ignore_index=255, reduction='mean',pos_weight=torch.tensor([8.0]))  # ignore_index=255 is used to ignore pixels where the mask is not valid (e.g., no data)
-
-    dice = smp.losses.DiceLoss(mode='binary', from_logits=True, ignore_index=255)  # from_logits=True means the input is raw logits, not probabilities
-    focal = smp.losses.FocalLoss(mode='binary', alpha=alpha, gamma=gamma)
-    # Adjust alpha if one class dominates or struggles.
-    # Adjust gamma to fine-tune focus on hard examples
-
-    def bce_dice(preds, targets):
-        preds_prob = torch.sigmoid(preds)  # Convert logits to probabilities for Dice Loss
-        return bce_weight * smp_bce(preds, targets) + (1 - bce_weight) * dice(preds_prob, targets)
 
     def bce_dice_valid(
         logits: torch.Tensor,          # [B,1,H,W] raw outputs
@@ -150,14 +134,44 @@ def loss_chooser(loss_name, alpha=0.25, gamma=2.0, bce_weight=0.5):
         # ----- Combine -----
         return bce_weight * bce + (1.0 - bce_weight) * dice
 
-
     if loss_name == "torch_bce":
+        torch_bce = torch.nn.BCEWithLogitsLoss()
+        if device is not None:
+            torch_bce = torch_bce.to(device)
         return torch_bce        
     if loss_name == "smp_bce":
+        # Create pos_weight on the correct device
+        pos_weight = torch.tensor([8.0])
+        if device is not None:
+            pos_weight = pos_weight.to(device)
+        smp_bce =  smp.losses.SoftBCEWithLogitsLoss(ignore_index=255, reduction='mean', pos_weight=pos_weight)  # ignore_index=255 is used to ignore pixels where the mask is not valid (e.g., no data)
+        if device is not None:
+            smp_bce = smp_bce.to(device)
         return smp_bce
     if loss_name == "focal": # no weighting
+        logger.info(f'---alpha: {alpha}, gamma: {gamma}---')  
+        focal = smp.losses.FocalLoss(mode='binary', alpha=alpha, gamma=gamma)
+        # Adjust alpha if one class dominates or struggles.
+        # Adjust gamma to fine-tune focus on hard examples
+        if device is not None:
+            focal = focal.to(device)
         return focal
     if loss_name == "bce_dice":
+        # Create pos_weight on the correct device
+        pos_weight = torch.tensor([8.0])
+        if device is not None:
+            pos_weight = pos_weight.to(device)
+        smp_bce = smp.losses.SoftBCEWithLogitsLoss(ignore_index=255, reduction='mean', pos_weight=pos_weight)
+        if device is not None:
+            smp_bce = smp_bce.to(device)
+        
+        dice = smp.losses.DiceLoss(mode='binary', from_logits=True, ignore_index=255)  # from_logits=True means the input is raw logits, not probabilities
+        if device is not None:
+            dice = dice.to(device)
+        
+        def bce_dice(preds, targets):
+            preds_prob = torch.sigmoid(preds)  # Convert logits to probabilities for Dice Loss
+            return bce_weight * smp_bce(preds, targets) + (1 - bce_weight) * dice(preds_prob, targets)
         logger.info(f'---loss chooser returning bce_dice with weight: {bce_weight}---')
         return bce_dice
 
@@ -168,7 +182,6 @@ def loss_chooser(loss_name, alpha=0.25, gamma=2.0, bce_weight=0.5):
     #     return smp.losses.TverskyLoss()
     # elif loss_name == "jakard":
     #     return smp.losses.JaccardLoss() # penalize fp and fn. use with bce
-
     else:
         raise ValueError(f"Unknown loss: {loss_name}")
     
