@@ -79,23 +79,38 @@ def handle_interrupt(signal, frame):
 
 def loss_chooser(loss_name, alpha=0.25, gamma=2.0, bce_weight=0.5):
     '''
-    MUST ADDRESS:
-    - CLASS IMBALANCE: Handled by Focal Loss and BCE-Dice combinations.
-    - HIGH RECALL: Dice loss emphasizes overlap, helping improve recall.
-    - BOUNDARY ACCURACY: Dice and Focal Loss focus on boundary regions.
-
+    Returns a loss function for binary flood segmentation.
+    
+    Available loss functions:
+        - "torch_bce": Standard PyTorch Binary Cross-Entropy with logits
+        - "smp_bce": Segmentation Models BCE with ignore_index=255 support
+        - "bce_dice": Weighted combination of BCE + Dice (recommended)
+        - "focal": Focal Loss for hard example mining
+    
+    Loss function design considerations:
+        - CLASS IMBALANCE: Addressed by pos_weight in BCE, naturally handled by Dice
+        - HIGH RECALL: Dice loss emphasizes true positives (overlap between pred and target)
+        - BOUNDARY ACCURACY: Both Dice and Focal Loss help with precise boundaries
+        - IGNORE INVALID PIXELS: All losses support ignore_index=255 for no-data regions
+    
     Parameters:
-    - loss_name: Name of the desired loss function.
-    - alpha: Weighting factor for the minority class (used in Focal Loss).
-    - gamma: Modulating factor for hard examples (used in Focal Loss).
-    - bce_
+        loss_name (str): Name of the loss function to use
+        alpha (float): Class weighting for Focal Loss (default 0.25)
+        gamma (float): Focusing parameter for Focal Loss - higher = more focus on hard examples (default 2.0)
+        bce_weight (float): Weight for BCE component in bce_dice combo (default 0.5)
+                           E.g., 0.35 = 35% BCE + 65% Dice
+    
+    Returns:
+        callable: Loss function that takes (predictions, targets) and returns scalar loss
     '''
 
     if loss_name == "focal":
         logger.info(f'---alpha: {alpha}, gamma: {gamma}---')  
 
     torch_bce = torch.nn.BCEWithLogitsLoss()
-    smp_bce =  smp.losses.SoftBCEWithLogitsLoss(ignore_index=255, reduction='mean')  # ignore_index=255 is used to ignore pixels where the mask is not valid (e.g., no data)
+
+    smp_bce =  smp.losses.SoftBCEWithLogitsLoss(ignore_index=255, reduction='mean',pos_weight=torch.tensor([8.0]))  # ignore_index=255 is used to ignore pixels where the mask is not valid (e.g., no data)
+
     dice = smp.losses.DiceLoss(mode='binary', from_logits=True, ignore_index=255)  # from_logits=True means the input is raw logits, not probabilities
     focal = smp.losses.FocalLoss(mode='binary', alpha=alpha, gamma=gamma)
     # Adjust alpha if one class dominates or struggles.

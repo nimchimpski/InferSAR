@@ -18,7 +18,7 @@ def calc_ratio(tiles):
             continue
         # print(f"---Processing {tile.name}")
         with rasterio.open(tile) as src:
-            data = src.read(3)
+            data = src.read(1)
             flooded_count += np.sum(data == 1)
             non_flooded_count += np.sum(data == 0)
             # print(f'---flooded_count: {flooded_count}')
@@ -26,6 +26,8 @@ def calc_ratio(tiles):
 
     # Calculate class ratio
     total_pixels = flooded_count + non_flooded_count
+    print(f'---total_pixels: {total_pixels}')
+    print(f'---flooded_count: {flooded_count}')
     if total_pixels == 0:
         print(f"---{tiles.name} Ratio: 0")
         return  
@@ -34,33 +36,39 @@ def calc_ratio(tiles):
     print(f"{tile.parent.name} Ratio: {class_ratio:.2f}")
     return class_ratio
 
-# train_INPUT = Path(r"C:\Users\floodai\UNOSAT_FloodAI_v2\1data\4final\train_INPUT\695971749_1.nc_normalized_tiles_logclipmm_g_pcnf100_mt0.3_pcu0.0" )
+
+# @click.command()
+# @click.option('--test', is_flag=True, help="Use test_INPUT")
+# @click.option('--train', is_flag=True, help="Use train_INPUT")
+
+# def main(test = False, train = False):
+#     if test:
+#         src = Path(r"C:\Users\floodai\UNOSAT_FloodAI_v2\1data\4final\test_INPUT")
+#     elif train:
+#         src = Path(r"C:\Users\floodai\UNOSAT_FloodAI_v2\1data\4final\train_INPUT" )
+#     # for event in train_INPUT.iterdir():
+#     # if True:
+#     for folder in src.iterdir():
+#         for splitfolder in folder.iterdir():        
+#             if splitfolder.is_dir and  splitfolder.name in ["train", "test", "val"]:
+#                 # if not splitfolder.name == "test":
+#                 #     continue
+#                 # print(f"---Processing {splitfolder.name}")
+#                 calc_ratio(splitfolder)
+#             elif splitfolder.suffix == '.txt':
+#                 # print(f"---Processing txt {splitfolder.name}")
+#                 with open(splitfolder, 'r') as f:
+#                     lines = f.readlines()
+#                     numlines = len(lines)
+#                     print(f"---{splitfolder.name} has {numlines} lines")
+
+input_path = Path("/Users/alexwebb/laptop_coding/floodai/InferSAR/data/4final/dataset/LabelHand")
+def main():
 
 
-@click.command()
-@click.option('--test', is_flag=True, help="Use test_INPUT")
-@click.option('--train', is_flag=True, help="Use train_INPUT")
-def main(test = False, train = False):
+    calc_ratio(input_path)
 
-    if test:
-        src = Path(r"C:\Users\floodai\UNOSAT_FloodAI_v2\1data\4final\test_INPUT")
-    elif train:
-        src = Path(r"C:\Users\floodai\UNOSAT_FloodAI_v2\1data\4final\train_INPUT" )
-    # for event in train_INPUT.iterdir():
-    # if True:
-    for folder in src.iterdir():
-        for splitfolder in folder.iterdir():        
-            if splitfolder.is_dir and  splitfolder.name in ["train", "test", "val"]:
-                # if not splitfolder.name == "test":
-                #     continue
-                # print(f"---Processing {splitfolder.name}")
-                calc_ratio(splitfolder)
-            elif splitfolder.suffix == '.txt':
-                # print(f"---Processing txt {splitfolder.name}")
-                with open(splitfolder, 'r') as f:
-                    lines = f.readlines()
-                    numlines = len(lines)
-                    print(f"---{splitfolder.name} has {numlines} lines")
+
 
 if __name__ == "__main__":
     main()

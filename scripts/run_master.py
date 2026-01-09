@@ -11,6 +11,9 @@ Usage:
     python run_master_new.py --config   # Use config file
     python run_master_new.py --fine_tune # Fine-tune from training checkpoint
     python run_master_new.py --ckpt_input # Specify checkpoint input folder
+
+If training on multiple regions - consider enabling 'dynamic weighting' to deal with batch differences - and then disable the weighting here:-
+ smp_bce =  smp.losses.SoftBCEWithLogitsLoss(ignore_index=255, reduction='mean',pos_weight=torch.tensor([8.0]))
 """
 import logging
 logging.basicConfig(
@@ -172,7 +175,8 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     in_channels = 2 # TODO ???
     DEVRUN = 0
     # Loss function parameters
-    loss_description = 'bce_dice' #'smp_bce' # 'bce_dice' #'focal' # 'bce_dice' # focal'
+    loss_description = 'bce_dice' # 'smp_bce' #  ''focal'
+
     focal_alpha = 0.8
     focal_gamma = 8
     bce_weight = 0.35 # FOR BCE_DICE
