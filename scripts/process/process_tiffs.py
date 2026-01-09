@@ -919,11 +919,13 @@ def align_image_to_mask(sar_image, mask, aligned_image):
     logger.info(f"---Aligned SAR image saved to: {aligned_image}")
 
 #  TILING
-def tile_geotiff_directly(vv_image: Path, vh_image: Path, output_path: Path, 
-                         tile_size: int = 512, stride: int = 512, db_min=-30.0, db_max=0.0) -> tuple:
+def tile_geotiff_directly(vv_image: Path, vh_image: Path, output_path: Path, tile_size: int = 512, stride: int = 512, db_min=-30.0, db_max=0.0) -> tuple:
     """
     Tile VV and VH GeoTIFFs directly without creating datacube.
     More efficient for inference.
+
+    - input: 2 images, vv adn vh
+    - vv and vh bands are stacked together in each tile
     
     Returns Tuple of:
         tiles: List of tile paths

@@ -36,6 +36,17 @@
                 "--test",
                 "--ckpt_input"  // Add this to use the INPUT checkpoint
             ]
+        },
+        {
+            "name": "Inference Mode (input ckpt",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/run_master.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--inference",
+                "--ckpt_input"  // Add this to use the INPUT checkpoint
+            ]
         }
     ]
 }

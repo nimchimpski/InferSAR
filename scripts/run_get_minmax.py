@@ -12,8 +12,6 @@ sys.path.insert(0, str(project_path))
 
 from scripts.process.process_helpers import compute_traintiles_minmax, write_minmax_to_json
 
-
-
 logging.basicConfig(
     level=logging.INFO,                            # DEBUG, INFO,[ WARNING,] ERROR, CRITICAL
     format=" %(levelname)-8s %(name)s: %(message)s",
@@ -30,13 +28,16 @@ def main():
 
     # Compute min and max values
     globmin, globmax = compute_traintiles_minmax(dataset_path)
+    print(f"Raw Global Min: {globmin}, Global Max: {globmax}")
+    globmin=globmin - 1
+    globmax=globmax + 1
 
     # Print the results
-    logger.info(f"Global Min: {globmin}")
-    logger.info(f"Global Max: {globmax}")
+    print(f"Global Min-1: {globmin}")
+    print(f"Global Max+1: {globmax}")
 
     output_path= project_path / 'configs' / 'global_minmax_INPUT' / 'global_minmax.json'
-    write_minmax_to_json(globmin, globmax, output_path)
+    write_minmax_to_json(int(globmin), int(globmax), output_path)
 
 
 if __name__ == "__main__":

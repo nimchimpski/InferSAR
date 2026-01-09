@@ -1,0 +1,22 @@
+ORDER TYPES — QUICK REFERENCE TABLE
+Order Type	Placed Relative to Market	               What It Does	Typical Use	Key Risk
+BUY LIMIT	Below market	Buys at a better (lower) price	        Enter long / take profit on short	No fill if price never drops
+SELL LIMIT	Above market	Sells at a better (higher) price	        Enter short / take profit on long	No fill if price never rises
+BUY STOP	Above market	Buys when price moves against you	Stop-loss for short	Slippage
+SELL STOP	Below market	Sells when price moves against you	Stop-loss for long	Slippage
+BUY STOP-LIMIT	        Stop above, Limit ≥ stop	                Stop-loss short with price cap	Controlled exit from short	May not fill
+SELL STOP-LIMIT	        Stop below, Limit ≤ stop	               Stop-loss long with price floor	Controlled exit from long	May not fill
+Absolute Rules (Read Before Sending)
+
+LIMIT = improve price
+
+STOP = defend position
+
+Short + price going UP = BUY STOP
+
+Long + price going DOWN = SELL STOP
+
+2-Second Sanity Check
+
+“Am I reacting to a worse price?” → STOP
+“Am I waiting for a better price?” → LIMIT

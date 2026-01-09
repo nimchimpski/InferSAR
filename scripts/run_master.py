@@ -14,7 +14,7 @@ Usage:
 """
 import logging
 logging.basicConfig(
-    level=logging.WARNING, 
+    level=logging.INFO, 
     force=True,                           
     format=" %(levelname)-8s %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S")
@@ -77,7 +77,7 @@ from scripts.process.process_dataarrays import tile_datacube_rxr_inf
 from scripts.train.train_helpers import is_sweep_run, pick_device
 from scripts.train.train_classes import  UnetModel,   Segmentation_training_loop, Sen1Dataset
 from scripts.train.train_functions import  loss_chooser, wandb_initialization, job_type_selector, create_subset
-from scripts.inference_functions import make_prediction_tiles, stitch_tiles, clean_checkpoint_keys, create_inference_csv, write_df_to_csv
+from scripts.inference_functions import create_weight_matrix, make_prediction_tiles, stitch_tiles, clean_checkpoint_keys, create_inference_csv, write_df_to_csv
 from scripts.paths_class import ProjectPaths
 
 start = time.time()
@@ -127,7 +127,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
             logger.info("\nFINE TUNING FROM TRAINING CKPT\n")
     elif inference:
         job_type = "inference"
-        print("\n" + "="*20 + "\nINFERENCE MODE\n" + "="*20 )
+        print("\n" + "="*40 + "\nINFERENCE MODE\n" + "="*40 )
         logger.info("\nNEEDS TO 'MAKE TIFFS' TO ENABLE NORMALISATION. WILL NOT MAKE DATACUBE. TILE DIRECTLY FROM THE NORAMLISED TIFS.\n" + "="*50 + "\n")
 
     device = pick_device()                       
@@ -152,23 +152,24 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         raise FileNotFoundError("Required paths validation failed. See errors above.")
     #......................................................
     # CONFIGURATION PARAMETERS
+
+    DUAL_BAND_INPUT = True # True for dual band VV+VH input, False for single band
+    input_is_linear = False  # True for copernicus direct downloads, False for Sen1floods11
+    # Training parameters
     dataset_name = "sen1floods11"  # "sen1floods11" or "copernicus_floods"
     run_name = "_runname"
-    SINGLE_INPUT = False # True for dual band VV+VH input, False for single band
-    input_is_linear = True  # True for copernicus direct downloads, False for Sen1floods11
-    # Training parameters
+    TRAINING_DATA_PRETILED = True
     subset_fraction = 1
     batch_size = 8 # 8 is tested as optimal for the macbook
     max_epoch = 15
     early_stop = True
     patience = 3
     num_workers = 0 # //////////////////////////
-    threshold = 0.5  # Default threshold for training
     # Logging and model parameters
     WandB_online = True
     LOGSTEPS = 50
     PRETRAINED = True
-    in_channels = 2
+    in_channels = 2 # TODO ???
     DEVRUN = 0
     # Loss function parameters
     loss_description = 'bce_dice' #'smp_bce' # 'bce_dice' #'focal' # 'bce_dice' # focal'
@@ -179,20 +180,27 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     # db_min = None
     # db_max = None
     tile_size = 512
-    stride = tile_size
-    # Processing flags - default to False, set to True in specific modes
-    TRAINING_DATA_PRETILED = True
-
+    stride = 256
+    
     # Initialize variables
-    stitched_image = None  # Will be set later based on mode
+    stitched_img_path = None  # Will be set later based on mode
     # INFERENCE CONFIGURATION
     output_filename = '_rhone_leman'
     # sensor = 'S1'
     # date= '030126'
-    threshold = 0.5
+    threshold = 0.3
     # ........................................................
-    print("="*20 +f'\nINPUT IS LINEAR = {input_is_linear}\n' + "."*20)
-    print("="*20 +f'\nSINGLE INPUT = {SINGLE_INPUT}\n' + "."*20)
+    if input_is_linear:
+        print("="*40 +f'\nINPUT IS LINEAR = {input_is_linear}')
+    else:
+        print("="*40 +f'\nINPUT IS dB')
+    if DUAL_BAND_INPUT:
+        print("="*40 +f'\nDUAL BAND INPUT = {DUAL_BAND_INPUT}')
+    else:
+        print("="*40 +f'\nINPUT IS SEPERATE , SINGLE BAND FILES')
+    print("="*40 +f'\nWandB ONLINE = {WandB_online}')
+    if WandB_online:
+        print("."*40)
     
     MAKE_TIFS = None # INFERENCE NEEDS THIS
     MAKE_DATAARRAY = None # INFERENCE DOES NOT NEED THIS
@@ -202,6 +210,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         MAKE_TIFS = False
     if inference:
         # DO NOT CHANGE THESE 
+        WandB_online = False
         MAKE_TIFS = True
         MAKE_TILES = True
         subset_fraction = 1
@@ -228,10 +237,10 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         logger.info(f"Image code: {image_code}")
     
         working_path = paths.predictions_path
-        stitched_image = inference_paths['stitched_image']
-        stitched_image = working_path /  f'{dataset_name}_{timestamp}_{tile_size}_{threshold}_{output_filename}.tif'
-        if stitched_image.exists():
-            logger.info(f"overwriting existing file! : {stitched_image}")
+        stitched_img_path = inference_paths['stitched_image']
+        stitched_img_path = working_path /  f'{dataset_name}_{timestamp}_{tile_size}_{threshold}_{output_filename}.tif'
+        if stitched_img_path.exists():
+            logger.info(f"overwriting existing file! : {stitched_img_path}")
 
     if config:
         if not paths.main_config.exists():
@@ -285,7 +294,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     else:
         loss_desc = loss_description
 
-    run_name = f"{dataset_name}_{timestamp}_BS{config.batch_size}_s{config.subset_fraction}_{loss_desc}"  
+    run_name = f"{job_type}_{dataset_name}_{timestamp}_BS{config.batch_size}_s{config.subset_fraction}_{loss_desc}"  
     wandb.run.name = run_name
 
     # wandb.run.save()
@@ -304,7 +313,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         db_min = stats['global_minmax']['db_min']
         db_max = stats['global_minmax']['db_max']
         logger.info(f"Loaded dataset stats: db_min={db_min:.2f}, db_max={db_max:.2f}")
-        print(F'\n............................\nUSING GLOBAL dB MIN {db_min} AND dB MAX {db_max}\n')
+        print(F'............................\nUSING GLOBAL dB MIN {db_min} AND dB MAX {db_max}')
     else:
         logger.warning(f"No dataset statistics found at {stats_file}")
         logger.warning(f"Using hardcoded db_min={db_min}, db_max={db_max}")
@@ -330,9 +339,9 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         logger.info('EXTRACTING VV AND VH CHANNELS')
         predict_input = inference_paths['predict_input_path']
 
-        if SINGLE_INPUT:
+        if DUAL_BAND_INPUT:
             # Filter for .tif files specifically, ignoring system files
-            print('=====SINGLE MULTIBAND INPUT======')
+            print('='*40 +'DUAL BAND INPUT')
 
             valid_files = [f for f in predict_input.iterdir() 
                            if f.is_file() 
@@ -345,8 +354,8 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         
             # check there is only one file
             if len(valid_files) > 1:
-                logger.error(f"SINGLE_INPUT is True but multiple .tif files found in {predict_input}")
-                raise ValueError(f"SINGLE_INPUT is True but multiple .tif files found in {predict_input}")
+                logger.error(f"DUAL_BAND_INPUT is True but multiple .tif files found in {predict_input}")
+                raise ValueError(f"DUAL_BAND_INPUT is True but multiple .tif files found in {predict_input}")
         
             image = valid_files[0]  # Take the first valid .tif file
             logger.info(f"--- Image to process: {image}")
@@ -394,7 +403,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
                 logger.info(f"wrote VV tif at vv_image_path: {vv_image_path}")
                 logger.info(f"wrote VH tiff at vh_image_path: {vh_image_path}")
         else:
-            print("="*20 + "\nDUAL IMAGE INPUT")
+            print("="*40 + "\nDUAL IMAGE INPUT")
             vv_image_path = None
             vh_image_path = None
 
@@ -409,8 +418,8 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
             if not vv_image_path or not vh_image_path:
                 raise FileNotFoundError(f"Missing VV or VH files in {predict_input}")
             
-            logger.info(f"Found VV: {vv_image_path}")
-            logger.info(f"Found VH: {vh_image_path}")
+            logger.info(f"Found inference VV: {vv_image_path}")
+            logger.info(f"Found inference VH: {vh_image_path}")
             # copy files to extracted folder
             if not extracted.exists():
                 extracted.mkdir(parents=True, exist_ok=True)
@@ -423,10 +432,6 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
             vh_image_path = extracted / 'vh_copy.tif'
 
             logger.info(f"Copied VH to: {vh_image_path}")
-       
- 
-
-
 
 
         if True:
@@ -491,7 +496,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
             raise FileNotFoundError(f"No data cube found in {extracted}")
 
     if MAKE_TILES:
-        print(f'='*20 + '\nMAKING TILES')
+        print(f'='*40 + '\nMAKING TILES')
         if inference:
             # INFERENCE: Tile directly from GeoTIFF (no datacube needed)
             logger.info("Tiling directly from GeoTIFF for inference")
@@ -576,6 +581,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
             return
     elif train:
         # Training dataset
+        # normalisation handled in dataset class
         train_dataset = Sen1Dataset(
             job_type="train",
             working_path=paths.training_path,
@@ -757,17 +763,17 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         # Training or Testing
         if train:
             logger.info(" Starting training")
-            training_loop = Segmentation_training_loop(model, loss_fn, stitched_image, loss_description)
+            training_loop = Segmentation_training_loop(model, loss_fn, stitched_img_path, loss_description)
             trainer.fit(training_loop, train_dataloaders=train_dl, val_dataloaders=val_dl)
 
         elif test:
             logger.debug(f" Starting testing.....")
             training_loop = Segmentation_training_loop.load_from_checkpoint(
-                checkpoint_path=ckpt_path,  model=model, loss_fn=loss_fn, save_path=stitched_image, loss_description=loss_description
+                checkpoint_path=ckpt_path,  model=model, loss_fn=loss_fn, save_path=stitched_img_path, loss_description=loss_description
             )
             trainer.test(model=training_loop, dataloaders=test_dl)
 
-    # .........................................................
+    # //////////////////////////////////////////////////////////////
     # INFERENCE LOOP
     elif inference:
 
@@ -778,8 +784,11 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
             shutil.rmtree(pred_tiles_path)
         pred_tiles_path.mkdir(exist_ok=True)
 
-        #  # MAKE PREDICTION TILES
-        logger.info("\n\n========== MAKING PREDICTION TILES==========\n")
+        #  # MAKE PREDICTION ON TILES ////////////////////////////////
+
+        logger.info("\n\n========== MAKING PREDICTIONS ON TILES==========\n")
+            # CREATE A WEIGHT MATRIX FOR BLENDING
+
         with torch.no_grad():
             t = 1
             for imgs, valids, fnames in tqdm(dataloader, desc="Predict"):
@@ -827,16 +836,18 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
                 with open(metadata_path, "r") as f:
                     metadata = json.load(f) 
 
-        # STITCH PREDICTION TILES
+        # STITCH PREDICTION TILES /////////////////////////////////////////////
+
         input_image = next(extracted.rglob("*.tif"), None) if extracted.exists() else None
         if input_image and ('vv' in input_image.name.lower() or 'vh' in input_image.name.lower()) and input_image.suffix.lower() == '.tif':
             logger.info(f"---input_image: {input_image}")
             logger.info(f"---pred_tiles_path: {pred_tiles_path}")
             logger.info(f'---extracted folder: {extracted}')
-            stitch_tiles(metadata, pred_tiles_path, stitched_image, input_image)
+            stitch_tiles(metadata, pred_tiles_path, stitched_img_path, input_image, tile_size, stride, threshold)
         else:
             logger.warning(f"No suitable input image found in {extracted} for stitching")
             logger.info("Prediction tiles created but stitching skipped")  
+  
 
     # Cleanup
     run_time = (time.time() - start) / 60
