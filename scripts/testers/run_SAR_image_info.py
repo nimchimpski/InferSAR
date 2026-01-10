@@ -2,7 +2,15 @@
 import sys
 import rasterio
 import numpy as np
+import logging
 from scripts.process.process_helpers import print_tiff_info_TSX
+
+logging.basicConfig(
+    level=logging.INFO,                            # DEBUG, INFO,[ WARNING,] ERROR, CRITICAL
+    format=" %(levelname)-8s %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+logger = logging.getLogger(__name__)
 
 def describe_raster(path):
     with rasterio.open(path) as src:

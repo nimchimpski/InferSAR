@@ -20,8 +20,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-mode = 'inference' 
+mode = 'train' 
 # mode = 'train' 
+
 
 def main():
     """
@@ -44,9 +45,9 @@ def main():
     print(f"Global Min-1: {globmin}")
     print(f"Global Max+1: {globmax}")
 
-    if mode == 'train':
-        output_path= project_path / 'configs' / 'global_minmax_INPUT' / 'global_minmax.json'
-        write_minmax_to_json(int(globmin), int(globmax), output_path)
+    # if mode == 'train':
+    #     output_path= project_path / 'configs' / 'global_minmax_INPUT' / 'global_minmax.json'
+    #     write_minmax_to_json(int(globmin), int(globmax), output_path)
 
 
 if __name__ == "__main__":

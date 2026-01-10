@@ -303,12 +303,10 @@ class Sen1Dataset(Dataset):
             )
         
         # For inference mode, scan all tiles to compute true dB min/max (pre-normalization)
-        if job_type == "inference":
-            self._compute_inference_db_stats()
+        # if job_type == "inference":
+        #     self._compute_inference_db_stats()
         
-        # For inference mode, scan all tiles to compute true dB min/max (pre-normalization)
-        if job_type == "inference":
-            self._compute_inference_db_stats()
+
 
     def _compute_inference_db_stats(self):
         """Scan all inference tiles to compute true dB min/max (before normalization)"""

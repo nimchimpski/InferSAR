@@ -183,13 +183,13 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     # Data processing parameters
     # db_min = None
     # db_max = None
-    tile_size = 512
-    stride = 256
+    tile_size = 512 
+    stride = 512
     
     # Initialize variables
     stitched_img_path = None  # Will be set later based on mode
     # INFERENCE CONFIGURATION
-    output_filename = '_rhone_leman'
+    output_filename = '_sauvbelin'
     # sensor = 'S1'
     # date= '030126'
     threshold = 0.5 # THRESHOLD FOR METRICS + STITCHING. used in train class and inference stitching
@@ -412,9 +412,9 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
 
             for file in predict_input.iterdir():
                 if file.suffix.lower() in ['.tif', '.tiff']:
-                    if 'vv' in file.name.lower():
+                    if '_vv_' in file.name.lower():
                         vv_image_path = file
-                    elif 'vh' in file.name.lower():
+                    elif '_vh_' in file.name.lower():
                         vh_image_path = file
 
             # Verify both files were found
