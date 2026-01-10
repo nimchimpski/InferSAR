@@ -301,6 +301,66 @@ class Sen1Dataset(Dataset):
                 f"csv has {len(self.img_paths)} images but "
                 f"{len(self.mask_paths)} masks"
             )
+        
+        # For inference mode, scan all tiles to compute true dB min/max (pre-normalization)
+        if job_type == "inference":
+            self._compute_inference_db_stats()
+        
+        # For inference mode, scan all tiles to compute true dB min/max (pre-normalization)
+        if job_type == "inference":
+            self._compute_inference_db_stats()
+
+    def _compute_inference_db_stats(self):
+        """Scan all inference tiles to compute true dB min/max (before normalization)"""
+        inference_db_min = float('inf')
+        inference_db_max = float('-inf')
+        
+        logger.info(f"Scanning {len(self.img_paths)} inference tiles for dB range...")
+        for idx, img_path in enumerate(self.img_paths):
+            if idx % max(1, len(self.img_paths) // 5) == 0:
+                logger.debug(f"  Processing tile {idx+1}/{len(self.img_paths)}")
+            
+            try:
+                with rasterio.open(img_path) as src:
+                    vv_arr = src.read(1).astype(np.float32)
+                    vh_arr = src.read(2).astype(np.float32)
+                    valid_np = src.dataset_mask().astype(bool)
+                
+                # Blank invalid pixels
+                vv_arr[~valid_np] = np.nan
+                vh_arr[~valid_np] = np.nan
+                
+                # Convert to dB if needed
+                for arr in (vv_arr, vh_arr):
+                    if self.input_is_linear:
+                        np.clip(arr, 1e-6, None, out=arr)
+                        np.log10(arr, out=arr)
+                        arr *= 10.0
+                    
+                    # Track min/max BEFORE normalization
+                    valid_data = arr[np.isfinite(arr)]
+                    if len(valid_data) > 0:
+                        inference_db_min = min(inference_db_min, valid_data.min())
+                        inference_db_max = max(inference_db_max, valid_data.max())
+            except Exception as e:
+                logger.warning(f"Error processing {img_path.name}: {e}")
+                continue
+        
+        # Print comparison
+        if inference_db_min != float('inf') and inference_db_max != float('-inf'):
+            logger.info(f"\n{'='*70}")
+            logger.info(f"INFERENCE DATA MINMAX STATS (dB, after conversion if applicable):")
+            logger.info(f"  Observed DB Min: {inference_db_min:.2f}")
+            logger.info(f"  Observed DB Max: {inference_db_max:.2f}")
+            logger.info(f"  Training  DB Min: {self.db_min:.2f}")
+            logger.info(f"  Training  DB Max: {self.db_max:.2f}")
+            if inference_db_min < self.db_min - 10 or inference_db_max > self.db_max + 10:
+                logger.warning(f"  ⚠ RANGE MISMATCH: Inference data differs significantly from training!")
+            else:
+                logger.info(f"  ✓ Ranges are compatible")
+            logger.info(f"{'='*70}\n")
+        else:
+            logger.warning("No valid inference data found (all tiles empty?)")
 
     def __len__(self) -> int:
         return len(self.img_paths)
@@ -387,11 +447,12 @@ class Sen1Dataset(Dataset):
 
 class Segmentation_training_loop(pl.LightningModule):
 
-    def __init__(self, model, loss_fn, save_path, loss_description):
+    def __init__(self, model, loss_fn, save_path, loss_description, metric_threshold=0.5):
         super().__init__()
         self.model = model
         self.loss_fn = loss_fn
         self.save_path = save_path
+        self.metric_threshold = metric_threshold
         self.save_hyperparameters(ignore = ['model', 'loss_fn', 'save_path'])   
         # Container to store validation results
         self.validation_outputs = []
@@ -472,7 +533,7 @@ class Segmentation_training_loop(pl.LightningModule):
 
         #   DEBUGGING
         # logger.info(f"---Validation Step {batch_idx}: images shape={images.shape}, logits shape={logits.shape}, masks shape={masks.shape}")
-        if self.current_epoch == self.trainer.max_epochs - 1 and batch_idx < 3:
+        if self.current_epoch == self.trainer.max_epochs - 1 and batch_idx == 0:
         # This is the last epoch
             # logger.info(f'---used dynamic weights = {dynamic_weights}')
             if not is_sweep_run():
@@ -609,7 +670,7 @@ class Segmentation_training_loop(pl.LightningModule):
         Visualizes input images, predictions, and ground truth masks side by side for a batch.
         """
 
-        preds = (torch.sigmoid(logits) > 0.1).int()
+        preds = (torch.sigmoid(logits) > self.metric_threshold).int()
 
         # logger.info(f'+++++++++++++    log combined visualization')
         # logger.info(f'---images shape: {images.shape[0]}') 
@@ -822,10 +883,8 @@ class Segmentation_training_loop(pl.LightningModule):
         self.log('auc_pr_test', auc_pr, prog_bar=True, logger=True, batch_size=len(all_logits))
 
     def metrics_maker(self, logits, masks, valid, job_type, loss, loss_description, lr=None):
-  
-        mthresh = 0.5
         probs = torch.sigmoid(logits) 
-        preds = (probs > mthresh).int()
+        preds = (probs > self.metric_threshold).int()
         batch_size = logits.shape[0]
         # logger.info(f'---metric threshod={mthresh}')
         if valid.sum() == 0:
@@ -864,7 +923,7 @@ class Segmentation_training_loop(pl.LightningModule):
             self.log(f'precision_{job_type}', precisionmean, prog_bar=True, on_step=False, on_epoch=True, batch_size=batch_size )
             self.log(f'recall_{job_type}', recallmean, prog_bar=True, on_step=False, on_epoch=True, batch_size=batch_size)
             self.log(f'f1_{job_type}', f1mean, prog_bar=True, on_step=False, on_epoch=True, batch_size=batch_size )
-            self.log(f'thresh_{job_type}', mthresh, batch_size=batch_size)
+            self.log(f'thresh_{job_type}', self.metric_threshold, batch_size=batch_size)
             # Precision-Recall Curve Logging (Binary Classification)
             # wandb_pr = wandb.plot.pr_curve(masks, probs, title=f"Precision-Recall Curve {job_type}")
             # self.log({"pr": wandb_pr})

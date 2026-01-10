@@ -530,7 +530,7 @@ def create_inference_csv(metadata):
     logger.info(f'\n\n++++++++ IN CREATE INFERENCE CSV\n')
     # Extract tile names and create dummy mask values
     tile_names = [tile_info["tile_name"] for tile_info in metadata]
-    logger.info(f'---tile names: {tile_names}')
+    logger.debug(f'---tile names: {tile_names}')
     dummy_masks = ["dummy_mask" for _ in tile_names]  # Dummy values for masks
 
     # Create a DataFrame

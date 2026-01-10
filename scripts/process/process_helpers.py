@@ -98,7 +98,7 @@ def compute_image_min_max(image, band_to_read=1):
 
 
 
-def compute_traintiles_minmax(dataset):
+def compute_traintiles_minmax(dataset, mode='train'):
     """
     Works on both sigle large image or folder of tiles.
     Computes the global minimum and maximum pixel values for a dataset.
@@ -110,6 +110,7 @@ def compute_traintiles_minmax(dataset):
         global_min (float): Global minimum pixel value.
         global_max (float): Global maximum pixel value.
     """
+    logger.info(f'+++in compute_traintiles_minmax mode={mode}')
     # logger.info('+++in compute_dataset_minmax')
     global_min = float('inf')
     global_max = float('-inf')
@@ -118,8 +119,9 @@ def compute_traintiles_minmax(dataset):
     ok=0
     tiles=0
     for image in dataset.iterdir():
-        if image.is_file() and image.suffix.lower() in ['.tif', '.tiff']:
-
+        if image.is_file() and image.suffix.lower() in ['.tif', '.tiff'] and image.suffix.lower() not in ['.aux.xml']:
+            if mode == 'inference':
+                print(f'Processing tile: {image.name}')
             tiles+=1
             # logger.info(f"Processing {image.name}")
             try:
@@ -127,7 +129,8 @@ def compute_traintiles_minmax(dataset):
                     for band_to_read in range(1, src.count + 1):
                         # Read the data as a NumPy array
                         # print(f"Processing band {band_to_read}" )
-                        logger.debug(f'processing {src.descriptions[band_to_read - 1].lower()}')
+                        if mode == 'train':
+                            logger.debug(f'processing {src.descriptions[band_to_read - 1].lower()}')
                         data = src.read(band_to_read)  # Read the first band
                         valid_data = data[np.isfinite(data)]  # create new np array excluding NaN values
                         if len(valid_data) == 0:

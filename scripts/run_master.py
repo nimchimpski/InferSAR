@@ -88,8 +88,8 @@ start = time.time()
 # Suppress num_workers warning - we've tested and num_workers=0 is optimal for our dataset
 warnings.filterwarnings('ignore', '.*does not have many workers.*')
 
-logging.getLogger('scripts.process.process_helpers').setLevel(logging.INFO)
-logging.getLogger('scripts.train.train_classess').setLevel(logging.INFO)
+# logging.getLogger('scripts.process.process_helpers').setLevel(logging.WARNING)
+# logging.getLogger('scripts.train.train_classess').setLevel(logging.WARNING)
 
 os.environ['KMP_DUPLICATE_LIB_OK'] = "True"
 
@@ -121,7 +121,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     if  test:
         job_type =  "test"
         print("\n========== TESTING MODE ==========")
-        print('\ntesting ckpt in INPUT folder\n')
+        # print('\ntesting ckpt in INPUT folder\n')
     elif train:
         job_type = "train" 
         print("========== TRAINING MODE ==========")
@@ -156,18 +156,18 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     #......................................................
     # CONFIGURATION PARAMETERS
 
-    DUAL_BAND_INPUT = True # True for dual band VV+VH input, False for single band
-    input_is_linear = False  # True for copernicus direct downloads, False for Sen1floods11
+    DUAL_BAND_INPUT = False # True for dual band VV+VH input, False for single band (multi-file) input
+    input_is_linear = True  # True for copernicus direct downloads, False for Sen1floods11
     # Training parameters
     dataset_name = "sen1floods11"  # "sen1floods11" or "copernicus_floods"
-    run_name = "_runname"
+    run_name = "_rhoneleman"
     TRAINING_DATA_PRETILED = True
     subset_fraction = 1
     batch_size = 8 # 8 is tested as optimal for the macbook
     max_epoch = 15
     early_stop = True
     patience = 3
-    num_workers = 0 # //////////////////////////
+    num_workers = 0 
     # Logging and model parameters
     WandB_online = True
     LOGSTEPS = 50
@@ -192,7 +192,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     output_filename = '_rhone_leman'
     # sensor = 'S1'
     # date= '030126'
-    threshold = 0.3
+    threshold = 0.5 # THRESHOLD FOR METRICS + STITCHING. used in train class and inference stitching
     # ........................................................
     if input_is_linear:
         print("="*40 +f'\nINPUT IS LINEAR = {input_is_linear}')
@@ -323,7 +323,6 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         logger.warning(f"Using hardcoded db_min={db_min}, db_max={db_max}")
         logger.warning("Consider running scan_dataset_minmax() first!")
 
-    #.......TRAIN / TEST - CREATE DATA LOADERS........
     if train:
         file_list_csv_path = paths.train_csv
         training_paths = paths.get_training_paths()
@@ -573,17 +572,15 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     #........................................................
     # CREATE DATALOADERS BASED ON JOB TYPE
     # EXISTING CKPTSONLY NEEDED FOR FINETUNING
-    if train and fine_tune:
-        # INPUT bool helper
-        if ckpt_input:
-            ckpt_path = next(paths.ckpt_input_path.rglob("*.ckpt"), None)
-        else:
-            # get latest checkpoint in training folder
-            ckpt_path = max(paths.ckpt_training_path.rglob("*.ckpt"), key=os.path.getctime, default=None)
-        if ckpt_path is None:
-            logger.error(f"No checkpoint found in: {paths.ckpt_input_path}")
-            return
-    elif train:
+    if ckpt_input:
+        ckpt_path = next(paths.ckpt_input_path.rglob("*.ckpt"), None)
+    else:
+        # get latest checkpoint in training folder
+        ckpt_path = max(paths.ckpt_training_path.rglob("*.ckpt"), key=os.path.getctime, default=None)
+    if ckpt_path is None:
+        logger.error(f"*No checkpoint found in: {paths.ckpt_input_path}")
+        return
+    if train:
         # Training dataset
         # normalisation handled in dataset class
         train_dataset = Sen1Dataset(
@@ -624,17 +621,6 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         val_dl = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, persistent_workers=persistent_workers)
         
     elif test:
-        # INPUT bool helper
-        if ckpt_input:
-            ckpt_path = next(paths.ckpt_input_path.rglob("*.ckpt"), None)
-            logger.debug('ckpt path = ' + str(ckpt_path))
-
-        else:
-            # get latest checkpoint in training folder
-            ckpt_path = max(paths.ckpt_training_path.rglob("*.ckpt"), key=os.path.getctime, default=None)
-        if ckpt_path is None:
-            logger.error(f"No checkpoint found in: {paths.ckpt_input_path}")
-            return
 
         # Test dataset
         test_dataset = Sen1Dataset(
@@ -656,16 +642,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         test_dl = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, persistent_workers=persistent_workers)
         
     elif inference:
-
-        ckpt_path = next(paths.ckpt_input_path.rglob("*.ckpt"), None)
-        if ckpt_path is None:
-            logger.error(f"No checkpoint found in: {paths.ckpt_input_path}")
-            return
-
         logger.debug(">>>>>>>>> CREATING INFERENCE DATALOADER")
-
-
-        
         # Inference dataset
         inference_dataset = Sen1Dataset(
             job_type="inference",
@@ -683,6 +660,8 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         
         dataloader = DataLoader(inference_subset, batch_size=batch_size, num_workers=num_workers, persistent_workers=persistent_workers, shuffle=False)
     
+    print(f'='*40 + f'\nCKPT NAME: {ckpt_path.name}\n' + '='*40)
+
     if test or inference:
         try:
             ckpt = torch.load(ckpt_path, map_location=device)
@@ -704,7 +683,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     # .........................................................
     # CHOOSE LOSS FUNCTION 
     if train or test:
-        loss_fn = loss_chooser(loss_description, config.focal_alpha, config.focal_gamma, config.bce_weight)
+        loss_fn = loss_chooser(loss_description, config.focal_alpha, config.focal_gamma, config.bce_weight, device=device)
         
 
         
@@ -770,13 +749,13 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         # Training or Testing
         if train:
             logger.info(" Starting training")
-            training_loop = Segmentation_training_loop(model, loss_fn, stitched_img_path, loss_description)
+            training_loop = Segmentation_training_loop(model, loss_fn, stitched_img_path, loss_description, metric_threshold=threshold)
             trainer.fit(training_loop, train_dataloaders=train_dl, val_dataloaders=val_dl)
 
         elif test:
             logger.debug(f" Starting testing.....")
             training_loop = Segmentation_training_loop.load_from_checkpoint(
-                checkpoint_path=ckpt_path,  model=model, loss_fn=loss_fn, save_path=stitched_img_path, loss_description=loss_description
+                checkpoint_path=ckpt_path,  model=model, loss_fn=loss_fn, save_path=stitched_img_path, loss_description=loss_description, metric_threshold=threshold
             )
             trainer.test(model=training_loop, dataloaders=test_dl)
 
@@ -798,23 +777,29 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
 
         with torch.no_grad():
             t = 1
+            global_min = float('inf')
+            global_max = float('-inf')
             for imgs, valids, fnames in tqdm(dataloader, desc="Predict"):
-                logger.info(f'/////Processing batch {t} with {imgs.shape[0]} tiles')
+                logger.debug(f'/////Processing batch {t} with {imgs.shape[0]} tiles')
                 t += 1
-                logger.info(f'images shape: {imgs.shape}, valids shape: {valids.shape}, fnames: {fnames}')
-                logger.info(f"First image filename: {fnames[0]}")
+                logger.debug(f'images shape: {imgs.shape}, valids shape: {valids.shape}, fnames: {fnames}')
+                logger.debug(f"First image filename: {fnames[0]}")
 
                 first_img = imgs[0]
 
-                logger.info(f"First image tensor shape: {first_img.shape}")
-                logger.info(f"First image dtype: {first_img.dtype}")
-                logger.info(f"First image min: {first_img.min().item()}, max: {first_img.max().item()}")
+                logger.debug(f"First image tensor shape: {first_img.shape}")
+                logger.debug(f"First image dtype: {first_img.dtype}")
+                logger.debug(f"First image min: {first_img.min().item()}, max: {first_img.max().item()}")
         
                 # Inspect each channel
                 vv = first_img[0]
                 vh = first_img[1]
-                logger.info(f"VV min/max: {vv.min().item()}/{vv.max().item()}")
-                logger.info(f"VH min/max: {vh.min().item()}/{vh.max().item()}")
+                logger.debug(f"VV min/max: {vv.min().item()}/{vv.max().item()}")
+                logger.debug(f"VH min/max: {vh.min().item()}/{vh.max().item()}")
+
+                lmin, lmax = min(vv.min(),vh.min()), max(vv.max(), vh.max())
+                global_min = min(global_min, lmin)
+                global_max = max(global_max, lmax)
                 
                 imgs   = imgs.to(device)            # [B,2,H,W]
                 logits = model(imgs)
@@ -832,7 +817,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
                     dst_path = pred_tiles_path / name
                     with rasterio.open(dst_path, "w", **profile) as dst:
                         dst.write(out.astype("float32"), 1)  
-
+            print(f'GLOBAL MIN MAX OVER ALL TILES: {global_min} , {global_max}')
             ims_list = list(pred_tiles_path.glob("*.tif"))
             if len(ims_list) > 0:
                 # Load metadata for stitching

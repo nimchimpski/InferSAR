@@ -10,6 +10,7 @@ Consider adding headroom of 1-2 units to max to avoid clipping to the .json file
 project_path = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_path))
 
+from scripts import train
 from scripts.process.process_helpers import compute_traintiles_minmax, write_minmax_to_json
 
 logging.basicConfig(
@@ -19,15 +20,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+mode = 'inference' 
+# mode = 'train' 
+
 def main():
     """
     Compute the min and max values for each band in a dataset.
     """
     # Define the dataset path
-    dataset_path = project_path / 'data' / '4final' / 'dataset' / 'S1Hand'  # Replace with your actual dataset path
-
+    if mode == 'train':
+        dataset_path = project_path / 'data' / '4final' / 'dataset' / 'S1Hand'  #
+    elif mode == 'inference':
+        dataset_path = project_path / 'data' / '4final' / 'predict_input'  #
+        
+    print(f"mode ={mode} dataset= {dataset_path}")
     # Compute min and max values
-    globmin, globmax = compute_traintiles_minmax(dataset_path)
+    globmin, globmax = compute_traintiles_minmax(dataset_path, mode=mode)
     print(f"Raw Global Min: {globmin}, Global Max: {globmax}")
     globmin=globmin - 1
     globmax=globmax + 1
@@ -36,8 +44,9 @@ def main():
     print(f"Global Min-1: {globmin}")
     print(f"Global Max+1: {globmax}")
 
-    output_path= project_path / 'configs' / 'global_minmax_INPUT' / 'global_minmax.json'
-    write_minmax_to_json(int(globmin), int(globmax), output_path)
+    if mode == 'train':
+        output_path= project_path / 'configs' / 'global_minmax_INPUT' / 'global_minmax.json'
+        write_minmax_to_json(int(globmin), int(globmax), output_path)
 
 
 if __name__ == "__main__":
