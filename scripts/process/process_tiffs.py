@@ -934,7 +934,7 @@ def tile_geotiff_directly(vv_image: Path, vh_image: Path, output_path: Path, til
     import rasterio
     from rasterio.windows import Window
     
-    logger.info('\n\n++++++++++++++ IN TILE_GEOTIFF_DIRECTLY FN\n')
+    logger.info('+++++ IN TILE_GEOTIFF_DIRECTLY FN\n')
 
     tiles = []
     metadata = []

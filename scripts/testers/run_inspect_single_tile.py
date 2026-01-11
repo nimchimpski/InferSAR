@@ -28,7 +28,7 @@ def main():
             band_data = src.read(i)
             valid_data = band_data[np.isfinite(band_data)]
             min, max = min_max_vals(valid_data)
-            name = get_band_name(i, src)
+            name = src.descriptions[i].lower() if src.descriptions[i] else None
             numvals =  num_band_vals(valid_data)
             print(f"Band name: {name}: Min={min}, Max={max}")
             print(f"num unique vals = {numvals}")

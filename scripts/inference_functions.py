@@ -527,7 +527,7 @@ def create_inference_csv(metadata):
     Args:
         metadata (list): List of dictionaries containing tile information.
     """
-    logger.info(f'\n\n++++++++ IN CREATE INFERENCE CSV\n')
+    logger.debug(f'\n\n++++++++ IN CREATE INFERENCE CSV\n')
     # Extract tile names and create dummy mask values
     tile_names = [tile_info["tile_name"] for tile_info in metadata]
     logger.debug(f'---tile names: {tile_names}')
@@ -538,7 +538,7 @@ def create_inference_csv(metadata):
         "image": tile_names,
         "mask": dummy_masks
     })
-    logger.info(f'\n\n+++++++ END FUNCTION\n')
+    logger.debug(f'\n\n+++++++ END FUNCTION\n')
     return df
 
 def write_df_to_csv(df, csv_path):

@@ -303,17 +303,18 @@ class Sen1Dataset(Dataset):
             )
         
         # For inference mode, scan all tiles to compute true dB min/max (pre-normalization)
-        # if job_type == "inference":
-        #     self._compute_inference_db_stats()
+        if job_type == "inference":
+            self._compute_inference_db_stats()
         
 
 
     def _compute_inference_db_stats(self):
         """Scan all inference tiles to compute true dB min/max (before normalization)"""
+        logger.info('+++++IN DATALOADER/COMPUTE INFERENCE DB STATS()')
         inference_db_min = float('inf')
         inference_db_max = float('-inf')
         
-        logger.info(f"Scanning {len(self.img_paths)} inference tiles for dB range...")
+        logger.info(f"Scanning {len(self.img_paths)}, check vals look linear,convert to db , check dB range...")
         for idx, img_path in enumerate(self.img_paths):
             if idx % max(1, len(self.img_paths) // 5) == 0:
                 logger.debug(f"  Processing tile {idx+1}/{len(self.img_paths)}")
@@ -324,22 +325,35 @@ class Sen1Dataset(Dataset):
                     vh_arr = src.read(2).astype(np.float32)
                     valid_np = src.dataset_mask().astype(bool)
                 
-                # Blank invalid pixels
-                vv_arr[~valid_np] = np.nan
-                vh_arr[~valid_np] = np.nan
-                
-                # Convert to dB if needed
-                for arr in (vv_arr, vh_arr):
-                    if self.input_is_linear:
-                        np.clip(arr, 1e-6, None, out=arr)
-                        np.log10(arr, out=arr)
-                        arr *= 10.0
-                    
-                    # Track min/max BEFORE normalization
-                    valid_data = arr[np.isfinite(arr)]
-                    if len(valid_data) > 0:
-                        inference_db_min = min(inference_db_min, valid_data.min())
-                        inference_db_max = max(inference_db_max, valid_data.max())
+                    # Blank invalid pixels
+                    vv_arr[~valid_np] = np.nan
+                    vh_arr[~valid_np] = np.nan
+
+                    # Convert to dB if needed
+                    for n, arr in enumerate((vv_arr, vh_arr)):
+                        if self.input_is_linear:
+                            if idx < 3:
+                                logger.info(f"Checking if values look linear")
+
+                                finite = arr[np.isfinite(arr)]
+                                if finite.size == 0:
+                                    logger.info(f"  Tile {idx+1}, {arr.descriptions[0]} has no valid data.")
+                                    continue
+                                p1,p50,p99 = np.percentile(finite, [1,50,99])
+                                frac_le_zero = np.mean(finite <= 0)
+                                logger.info(f"{src.descriptions[1]} linear check: min={finite.min():.6f}, max={finite.max():.6f}, "
+                                            f"p1={p1:.6f}, p50={p50:.6f}, p99={p99:.6f}, frac<=0={frac_le_zero:.6f}")
+
+
+                            np.clip(arr, 1e-6, None, out=arr)
+                            np.log10(arr, out=arr)
+                            arr *= 10.0
+
+                        # Track min/max BEFORE normalization
+                        valid_data = arr[np.isfinite(arr)]
+                        if len(valid_data) > 0:
+                            inference_db_min = min(inference_db_min, valid_data.min())
+                            inference_db_max = max(inference_db_max, valid_data.max())
             except Exception as e:
                 logger.warning(f"Error processing {img_path.name}: {e}")
                 continue
@@ -356,7 +370,6 @@ class Sen1Dataset(Dataset):
                 logger.warning(f"  ⚠ RANGE MISMATCH: Inference data differs significantly from training!")
             else:
                 logger.info(f"  ✓ Ranges are compatible")
-            logger.info(f"{'='*70}\n")
         else:
             logger.warning("No valid inference data found (all tiles empty?)")
 
@@ -374,7 +387,7 @@ class Sen1Dataset(Dataset):
         img_path = self.img_paths[idx]
         # Log occasionally to avoid spam
         if idx % 100 == 0:
-            logger.info(f"---Loading image from {img_path}")
+            logger.info(f"Loading image from {img_path}")
 
         with rasterio.open(img_path) as src:
             vv_arr  = src.read(1).astype(np.float32)
