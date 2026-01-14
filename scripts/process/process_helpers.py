@@ -98,7 +98,7 @@ def compute_image_min_max(image, band_to_read=1):
 
 
 
-def compute_traintiles_minmax(dataset, mode='train'):
+def dataset_minmax_meanstd(dataset, mode='train'):
     """
     Works on both sigle large image or folder of tiles.
     Computes the global minimum and maximum pixel values for a dataset.
@@ -118,6 +118,8 @@ def compute_traintiles_minmax(dataset, mode='train'):
     # Iterate through all image files in each event
     ok=0
     tiles=0
+    all_vv_vals = []
+    all_vh_vals = []
     for image in dataset.iterdir():
         if image.is_file() and image.suffix.lower() in ['.tif', '.tiff'] and image.suffix.lower() not in ['.aux.xml']:
             if mode == 'inference':

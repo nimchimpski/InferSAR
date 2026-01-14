@@ -250,6 +250,8 @@ class Sen1Dataset(Dataset):
         input_is_linear: bool,
         db_min:         float = -30.0,
         db_max:         float =   0.0,
+        db_mean:        List[float] = None,
+        db_std:         List[float] = None,
     ):
         assert job_type in ("train","val", "test", "inference")
         self.job_type        = job_type
@@ -258,6 +260,8 @@ class Sen1Dataset(Dataset):
         self.input_is_linear = input_is_linear
         self.db_min          = db_min
         self.db_max          = db_max
+        self.db_mean         = db_mean
+        self.db_std          = db_std
 
         # will hold full Paths to files
         self.img_paths:  List[Path] = []
@@ -293,7 +297,7 @@ class Sen1Dataset(Dataset):
                     self.mask_paths.append(mask_path / mask_name)
 
 
-        logger.info(f"Found {len(self.img_paths)} images")
+        logger.debug(f"Found {len(self.img_paths)} images")
         logger.debug(f'imgs_paths: {self.img_paths}   ')
         # sanity check
         if job_type in ("train","val"):
@@ -303,18 +307,18 @@ class Sen1Dataset(Dataset):
             )
         
         # For inference mode, scan all tiles to compute true dB min/max (pre-normalization)
-        if job_type == "inference":
-            self._compute_inference_db_stats()
+        # if job_type == "inference":
+        #     self._compute_inference_db_stats()
         
 
-
+    # USE FOR DEBUGGING
     def _compute_inference_db_stats(self):
         """Scan all inference tiles to compute true dB min/max (before normalization)"""
-        logger.info('+++++IN DATALOADER/COMPUTE INFERENCE DB STATS()')
+        logger.debug('+++++IN DATALOADER/COMPUTE INFERENCE DB STATS()')
         inference_db_min = float('inf')
         inference_db_max = float('-inf')
         
-        logger.info(f"Scanning {len(self.img_paths)}, check vals look linear,convert to db , check dB range...")
+        logger.debug(f"Scanning {len(self.img_paths)}, check vals look linear,convert to db , check dB range...")
         for idx, img_path in enumerate(self.img_paths):
             if idx % max(1, len(self.img_paths) // 5) == 0:
                 logger.debug(f"  Processing tile {idx+1}/{len(self.img_paths)}")
@@ -330,26 +334,27 @@ class Sen1Dataset(Dataset):
                     vh_arr[~valid_np] = np.nan
 
                     # Convert to dB if needed
+                    # CHECK THE VALS - ARE THEY LINEAR?
                     for n, arr in enumerate((vv_arr, vh_arr)):
                         if self.input_is_linear:
                             if idx < 3:
-                                logger.info(f"Checking if values look linear")
+                                logger.debug(f"Checking if values look linear")
 
                                 finite = arr[np.isfinite(arr)]
                                 if finite.size == 0:
-                                    logger.info(f"  Tile {idx+1}, {arr.descriptions[0]} has no valid data.")
+                                    logger.debug(f"  Tile {idx+1}, {arr.descriptions[0]} has no valid data.")
                                     continue
                                 p1,p50,p99 = np.percentile(finite, [1,50,99])
                                 frac_le_zero = np.mean(finite <= 0)
                                 logger.info(f"{src.descriptions[1]} linear check: min={finite.min():.6f}, max={finite.max():.6f}, "
                                             f"p1={p1:.6f}, p50={p50:.6f}, p99={p99:.6f}, frac<=0={frac_le_zero:.6f}")
 
-
+                            # CONVERT TO DB
                             np.clip(arr, 1e-6, None, out=arr)
                             np.log10(arr, out=arr)
                             arr *= 10.0
 
-                        # Track min/max BEFORE normalization
+                        # TRACK MIN/MAX BEFORE NORMALIZATION
                         valid_data = arr[np.isfinite(arr)]
                         if len(valid_data) > 0:
                             inference_db_min = min(inference_db_min, valid_data.min())
@@ -383,47 +388,58 @@ class Sen1Dataset(Dataset):
         Tuple[torch.Tensor, torch.Tensor, torch.Tensor, str],
         Tuple[torch.Tensor, torch.Tensor, str]
     ]:
-        # --- load VV & VH + valid mask from the tile file ---
+        # --- LOAD VV & VH + VALID MASK FROM THE TILE FILE ---
         img_path = self.img_paths[idx]
-        # Log occasionally to avoid spam
+        # LOG OCCASIONALLY TO AVOID SPAM
         if idx % 100 == 0:
-            logger.info(f"Loading image from {img_path}")
+            logger.debug(f"Loading image from {img_path}")
 
         with rasterio.open(img_path) as src:
             vv_arr  = src.read(1).astype(np.float32)
             vh_arr  = src.read(2).astype(np.float32)
             valid_np = src.dataset_mask().astype(bool)
 
-        # blank invalid pixels
+        # BLANK INVALID PIXELS
         vv_arr[~valid_np] = np.nan
         vh_arr[~valid_np] = np.nan
 
-        # --- log→clip→minmax→[0,1] normalize each band ---
-        for arr in (vv_arr, vh_arr):
+         
+        for i, arr in enumerate([vv_arr, vh_arr]):
+            # LOG→CLIP→MINMAX→[0,1]
             if self.input_is_linear:
+                #  CLIP TINY VALS
                 np.clip(arr, 1e-6, None, out=arr)
+                # CONVERT TO DB
                 np.log10(arr, out=arr)
                 arr *= 10.0
-            np.nan_to_num(
-                arr,
+                # SWAP NANS FOR SOEMTHING FINITE
+                np.nan_to_num(
+                    arr,
                 copy=False,
-                nan=self.db_min,
+                nan=self.db_mean[i],
                 posinf=self.db_max,
                 neginf=self.db_min,
-            )
+                )
+            # CLIP TO TRAINING MIN/MAX
             np.clip(arr, self.db_min, self.db_max, out=arr)
-            arr -= self.db_min
-            arr /= (self.db_max - self.db_min)
+
+            #MINMAX NORM
+            # arr -= self.db_min
+            # arr /= (self.db_max - self.db_min)
+
+            # MEAN/STANDARD  NORMALISATION
+            arr -= self.db_mean[i]  # e.g. ~-12 for VV, ~-20 for VH
+            arr /= self.db_std[i]   # e.g. ~6-8 for both
 
         # stack & convert to tensor
         img_tensor = torch.from_numpy(np.stack([vv_arr, vh_arr], axis=0))
         # Log tensor info only occasionally to avoid spam
         if idx % 100 == 0:  # Log every 100th item
-            logger.info(f"GETITEM TENSOR INFO (sample {idx})")
-            logger.info(f"Image path: {img_path}")
-            logger.info(f"Image tensor dtype: {img_tensor.dtype}")
-            logger.info(f"Image tensor min: {img_tensor.min()}, max: {img_tensor.max()}")
-            logger.info(f"Image tensor shape: {img_tensor.shape}")
+            logger.debug(f"GETITEM TENSOR INFO (sample {idx})")
+            logger.debug(f"Image path: {img_path}")
+            logger.debug(f"Image tensor dtype: {img_tensor.dtype}")
+            logger.debug(f"Image tensor min: {img_tensor.min()}, max: {img_tensor.max()}")
+            logger.debug(f"Image tensor shape: {img_tensor.shape}")
         assert img_tensor.shape[0] == 2, f"Expected 2 channels, got {img_tensor.shape[0]}"
 
         # --- now branch by job_type ---
@@ -480,19 +496,19 @@ class Segmentation_training_loop(pl.LightningModule):
             x = self.model(x)  # Pass through the model
             # logger.info(f"---Output device in forward: {x.device}")
         except Exception as e:
-            logger.info(f"Error during forward pass: {e}")
+            logger.debug(f"Error during forward pass: {e}")
             raise
         return x
 
     def training_step(self, batch, batch_idx):
-        # logger.info(f'+++++++++++++++++++   training step') 
+        # logger.debug(f'+++++++++++++++++++   training step') 
         job_type = 'train'
 
         images, masks, valids, fnames = batch
         # DEBUGGING
         if torch.isnan(images).any() or torch.isinf(images).any():
-            logger.info(f"TRAIN STEP - Batch {batch_idx} - Input contains NaN or Inf")
-            logger.info(f"Mean: {images.mean()}, Std: {images.std()}, Min: {images.min()}, Max: {images.max()}")
+            logger.debug(f"TRAIN STEP - Batch {batch_idx} - Input contains NaN or Inf")
+            logger.debug(f"Mean: {images.mean()}, Std: {images.std()}, Min: {images.min()}, Max: {images.max()}")
             raise ValueError(f"Input contains NaN or Inf at batch {batch_idx}")
         images, masks, valids = images.to(self.device), masks.to(self.device), valids.to(self.device)
         logits = self(images)
@@ -500,7 +516,7 @@ class Segmentation_training_loop(pl.LightningModule):
         loss_per_pixel = (loss_per_pixel * valids.float()).sum() / valids.sum()  # Apply valid mask to loss
         # ONLY APPLIES DYNAMIC WEIGHTS TO BCE LOSS
         loss, dynamic_weights = self.dynamic_weight_chooser(masks, loss_per_pixel, self.loss_description)
-        # logger.info(f'---used dynamic weights = {dynamic_weights}')
+        # logger.debug(f'---used dynamic weights = {dynamic_weights}')
         assert logits.device == masks.device
 
         lr = self._get_current_lr()
@@ -510,23 +526,23 @@ class Segmentation_training_loop(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        # logger.info(f'+++++++++++++    validation step')
+        # logger.debug(f'+++++++++++++    validation step')
         job_type = 'val'
         images, masks, valids, fnames = batch
 
         if torch.isnan(images).any() or torch.isinf(images).any():
-            logger.info(f"VAl STEP - Batch {batch_idx} - Input contains NaN or Inf")
-            logger.info(f"Mean: {images.mean()}, Std: {images.std()}, Min: {images.min()}, Max: {images.max()}")
+            logger.debug(f"VAl STEP - Batch {batch_idx} - Input contains NaN or Inf")
+            logger.debug(f"Mean: {images.mean()}, Std: {images.std()}, Min: {images.min()}, Max: {images.max()}")
             raise ValueError(f"Input contains NaN or Inf at batch {batch_idx}")
 
         images, masks, valids  = images.to(self.device), masks.to(self.device), valids.to(self.device)
         logits = self(images)
 
-        # logger.info(f"---Validation Step {batch_idx}: logits shape={logits.shape}, masks shape={masks.shape}")
+        # logger.debug(f"---Validation Step {batch_idx}: logits shape={logits.shape}, masks shape={masks.shape}")
 
         if torch.isnan(logits).any() or torch.isinf(logits).any():
-            logger.info(f"---Batch {batch_idx} - Logits contain NaN or Inf")
-            logger.info(f"---Logits Stats - Mean: {logits.mean()}, Std: {logits.std()}, Min: {logits.min()}, Max: {logits.max()}")
+            logger.debug(f"---Batch {batch_idx} - Logits contain NaN or Inf")
+            logger.debug(f"---Logits Stats - Mean: {logits.mean()}, Std: {logits.std()}, Min: {logits.min()}, Max: {logits.max()}")
             raise ValueError(f"Logits contain NaN or Inf at batch {batch_idx}")
         
         self.validation_outputs.append({'logits': logits, 'masks': masks})  # Store outputs
@@ -538,15 +554,15 @@ class Segmentation_training_loop(pl.LightningModule):
         # Check if this is the last batch and save visualization
         val_dataloader = self.trainer.val_dataloaders
         total_batches = len(val_dataloader) 
-        # logger.info(f"---Total batches: {total_batches}")
+        # logger.debug(f"---Total batches: {total_batches}")
 
         images = images.squeeze(1)  # Remove the channel dimension if it's 1
 
         #   DEBUGGING
-        # logger.info(f"---Validation Step {batch_idx}: images shape={images.shape}, logits shape={logits.shape}, masks shape={masks.shape}")
+        # logger.debug(f"---Validation Step {batch_idx}: images shape={images.shape}, logits shape={logits.shape}, masks shape={masks.shape}")
         if self.current_epoch == self.trainer.max_epochs - 1 and batch_idx == 0:
         # This is the last epoch
-            # logger.info(f'---used dynamic weights = {dynamic_weights}')
+            # logger.debug(f'---used dynamic weights = {dynamic_weights}')
             if not is_sweep_run():
                 self.log_combined_visualization(images, logits, masks, valids, fnames)
 
@@ -559,28 +575,28 @@ class Segmentation_training_loop(pl.LightningModule):
         return {"loss": loss, "precision": precisionmean,"recall": recall, "iou": ioumean,  "f1": f1mean, 'logits': logits, 'labels': masks}   
 
     def test_step(self, batch, batch_idx):
-        # logger.info(f'+++++++++++++    test step')
+        # logger.debug(f'+++++++++++++    test step')
         job_type = 'test'
         images, masks, valids, fnames = batch
 
         self.test_images.append(images.cpu())
 
         if torch.isnan(images).any() or torch.isinf(images).any():
-            logger.info(f"TEST STEP -Batch {batch_idx} - Input contains NaN or Inf")
+            logger.debug(f"TEST STEP -Batch {batch_idx} - Input contains NaN or Inf")
             raise ValueError(f"Input contains NaN or Inf at batch {batch_idx}")
-        # logger.info(f"Validation Image Stats - Batch {batch_idx}")
-        # logger.info(f"Mean: {images.mean()}, Std: {images.std()}, Min: {images.min()}, Max: {images.max()}")
+        # logger.debug(f"Validation Image Stats - Batch {batch_idx}")
+        # logger.debug(f"Mean: {images.mean()}, Std: {images.std()}, Min: {images.min()}, Max: {images.max()}")
 
         images, masks, valids = images.to(self.device), masks.to(self.device), valids.to(self.device)
         logits = self(images)
 
         # Debug tensor stats
-        # logger.info(f"---Batch {batch_idx}: images.min={images.min()}, images.max={images.max()}")
-        # logger.info(f"---Batch {batch_idx}: logits.min={logits.min()}, logits.max={logits.max()}")
-        # logger.info(f"---Batch {batch_idx}: masks.min={masks.min()}, masks.max={masks.max()}")
+        # logger.debug(f"---Batch {batch_idx}: images.min={images.min()}, images.max={images.max()}")
+        # logger.debug(f"---Batch {batch_idx}: logits.min={logits.min()}, logits.max={logits.max()}")
+        # logger.debug(f"---Batch {batch_idx}: masks.min={masks.min()}, masks.max={masks.max()}")
         if torch.isnan(logits).any() or torch.isinf(logits).any():
-            logger.info(f"---Batch {batch_idx} - Logits contain NaN or Inf")
-            logger.info(f"---Logits Stats - Mean: {logits.mean()}, Std: {logits.std()}, Min: {logits.min()}, Max: {logits.max()}")
+            logger.debug(f"---Batch {batch_idx} - Logits contain NaN or Inf")
+            logger.debug(f"---Logits Stats - Mean: {logits.mean()}, Std: {logits.std()}, Min: {logits.min()}, Max: {logits.max()}")
             raise ValueError(f"Logits contain NaN or Inf at batch {batch_idx}")
 
         self.test_outputs.append({'logits': logits, 'masks': masks})  # Store outputs
@@ -590,19 +606,19 @@ class Segmentation_training_loop(pl.LightningModule):
         loss, dynamic_weights = self.dynamic_weight_chooser(masks, loss_per_pixel, self.loss_description)
         assert logits.device == masks.device
 
-        # logger.info(f"---weighted_loss device: {weighted_loss.device}")
+        # logger.debug(f"---weighted_loss device: {weighted_loss.device}")
         # preds = (torch.sigmoid(logits) > 0.5).int() # BCE, 
         # Determine if this is the last batch
         test_dataloader = self.trainer.test_dataloaders # First DataLoader
         total_batches = len(test_dataloader)
-        # logger.info(f"---Total batches: {total_batches}")
+        # logger.debug(f"---Total batches: {total_batches}")
         # if batch_idx == 1:
-        #     # logger.info('---batch_idx:', batch_idx)
-        #     # logger.info(f"---Saving test outputs for batch {batch_idx}")
+        #     # logger.debug('---batch_idx:', batch_idx)
+        #     # logger.debug(f"---Saving test outputs for batch {batch_idx}")
         self.log_combined_visualization(images, logits, masks, valids, fnames)
-        #     # JUST logger.info ON FIRST BATCH
+        #     # JUST logger.debug ON FIRST BATCH
         #     if batch_idx == 1:
-        #         logger.info(f'---used dynamic weights = {dynamic_weights}')
+        #         logger.debug(f'---used dynamic weights = {dynamic_weights}')
 
 
         
@@ -612,13 +628,13 @@ class Segmentation_training_loop(pl.LightningModule):
         return { "loss": loss,  "precision": precisionmean, "recall": recallmean, "iou": ioumean, "f1": f1mean, 'logits': logits, 'labels': masks}
     
     def _get_current_lr(self):
-        # logger.info(f'+++++++++++++    get current lr')
+        # logger.debug(f'+++++++++++++    get current lr')
         lr = [x["lr"] for x in self.optimizers().param_groups]
         return lr[0]
     
     def compute_dynamic_weights(self, mask):
         
-        # logger.info(f'+++++++++++++    compute dynamic weights')
+        # logger.debug(f'+++++++++++++    compute dynamic weights')
         assert torch.unique(mask).tolist() in [[0], [1], [0, 1]], f"Unexpected mask values: {torch.unique(mask)}"
 
         flood_pixels = (mask == 1).sum().float()
@@ -641,24 +657,24 @@ class Segmentation_training_loop(pl.LightningModule):
         return weights
     
     def dynamic_weight_chooser(self, masks, loss, loss_description):
-        # logger.info(f'+++++++++++++    dynamic weight chooser')
-        # logger.info(f'---loss_fn: {self.loss_fn}')
+        # logger.debug(f'+++++++++++++    dynamic weight chooser')
+        # logger.debug(f'---loss_fn: {self.loss_fn}')
         if loss_description in ['smp_bce']:
 
-            # logger.info(f'*********computing dynamic weights')
+            # logger.debug(f'*********computing dynamic weights')
             weights = self.compute_dynamic_weights(masks)
             # weights = weights.to('cuda')
             assert masks.device == weights.device
             dynamic_bool = True
             return  (loss * weights).mean(), dynamic_bool
         else:
-            # logger.info(f'---no dynamic weights')
+            # logger.debug(f'---no dynamic weights')
             dynamic_bool = False
             return loss.mean(), dynamic_bool
         
 
     def configure_optimizers(self):
-        logger.info(f'+++++++++++++    configure optimizers')
+        logger.debug(f'+++++++++++++    configure optimizers')
         params = [x for x in self.model.parameters() if x.requires_grad]
         optimizer = torch.optim.AdamW(params, lr=1e-4, weight_decay=1e-4)
         # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, min_lr=1e-4, verbose=True)
@@ -683,8 +699,8 @@ class Segmentation_training_loop(pl.LightningModule):
 
         preds = (torch.sigmoid(logits) > self.metric_threshold).int()
 
-        # logger.info(f'+++++++++++++    log combined visualization')
-        # logger.info(f'---images shape: {images.shape[0]}') 
+        # logger.debug(f'+++++++++++++    log combined visualization')
+        # logger.debug(f'---images shape: {images.shape[0]}') 
         assert images.ndim == 4, f"Expected images with 4 dimensions (B, C, H, W), got {images.shape}"
         assert preds.ndim == 4, f"Expected preds with 4 dimensions (B, C, H, W), got {preds.shape}"
         assert masks.ndim == 4, f"Expected masks with 4 dimensions (B, C, H, W), got {masks.shape}"
@@ -693,8 +709,8 @@ class Segmentation_training_loop(pl.LightningModule):
         max_samples = 20  # Maximum number of samples to visualize
         examples = []
         for i in range(min(images.shape[0], max_samples)):  # Loop through each sample in the batch
-            # logger.info(f"---images.shape {images.shape}")
-            # logger.info(f"---Sample {i}")
+            # logger.debug(f"---images.shape {images.shape}")
+            # logger.debug(f"---Sample {i}")
             cmap_cyan = ListedColormap(['black', 'cyan'])           
             # CONVERT TENSORS TO NUMPY
             image = images[i, 0].cpu().numpy()
@@ -755,12 +771,12 @@ class Segmentation_training_loop(pl.LightningModule):
         Compute AUC-PR only during the final validation epoch. takes the 
         """
         # if is_sweep_run():
-        #     logger.info(f'---in sweep mode so skipping auc-pr calculation')
+        #     logger.debug(f'---in sweep mode so skipping auc-pr calculation')
         #     return
 
         # Check if this is the final epoch
         if self.current_epoch == self.trainer.max_epochs - 1:
-            logger.info(f"---Calculating AUC-PR for the final validation epoch: {self.current_epoch}")
+            logger.debug(f"---Calculating AUC-PR for the final validation epoch: {self.current_epoch}")
 
             # Ensure validation_outputs has been populated
             if not self.validation_outputs:
@@ -793,16 +809,16 @@ class Segmentation_training_loop(pl.LightningModule):
                 raise ValueError("---logits_np contains NaN or Inf values.")
             if not np.isfinite(labels_np).all():
                 raise ValueError("---labels_np contains NaN or Inf values.")
-            # logger.info(f"---Logits: Min={logits_np.min()}, Max={logits_np.max()}, Mean={logits_np.mean()}")
-            # logger.info(f"---Labels: Unique={np.unique(labels_np)}, Counts={np.bincount(labels_np.astype(int))}")
+            # logger.debug(f"---Logits: Min={logits_np.min()}, Max={logits_np.max()}, Mean={logits_np.mean()}")
+            # logger.debug(f"---Labels: Unique={np.unique(labels_np)}, Counts={np.bincount(labels_np.astype(int))}")
 
             # COUNT UNIQUE CLASSES
             unique_classes, class_counts = np.unique(labels_np, return_counts=True)
-            logger.info(f"---Validation AUC-PR calculation:")
-            logger.info(f"---Total validation pixels: {len(labels_np)}")
-            logger.info(f"---Unique classes: {unique_classes}")
-            logger.info(f"---Class counts: {class_counts}")
-            logger.info(f"---Class distribution: {dict(zip(unique_classes, class_counts))}")
+            logger.debug(f"---Validation AUC-PR calculation:")
+            logger.debug(f"---Total validation pixels: {len(labels_np)}")
+            logger.debug(f"---Unique classes: {unique_classes}")
+            logger.debug(f"---Class counts: {class_counts}")
+            logger.debug(f"---Class distribution: {dict(zip(unique_classes, class_counts))}")
             
             # Skip AUC-PR calculation if there's only one class
             if len(unique_classes) < 2:
@@ -820,20 +836,20 @@ class Segmentation_training_loop(pl.LightningModule):
                 f1_scores = 2 * (precision * recall) / (precision + recall + 1e-8)  # Avoid division by zero
                 best_index = f1_scores.argmax()
                 best_threshold = thresholds[best_index]
-                logger.info(f"---Best Threshold: {best_threshold}, F1-Score: {f1_scores[best_index]}")
+                logger.debug(f"---Best Threshold: {best_threshold}, F1-Score: {f1_scores[best_index]}")
                 aucpr_plot = plot_auc_pr(recall, precision, thresholds, best_index, best_threshold)
                 # aucpr_plot.show()
                 self.logger.experiment.log({"Precision-Recall Curve": wandb.Image(aucpr_plot)})
                 auc_pr = auc(recall, precision)
 
             except ValueError as e:
-                logger.info(f"---AUC-PR calculation failed: {e}")
+                logger.debug(f"---AUC-PR calculation failed: {e}")
                 auc_pr = 0.0  # Default value for invalid AUC-PR
 
             # Log the final AUC-PR
             self.log('val_auc_pr', auc_pr, prog_bar=True, logger=True, batch_size=len(all_logits))
         else:
-        #     logger.info(f"---Skipping AUC-PR calculation for epoch: {self.current_epoch}")
+        #     logger.debug(f"---Skipping AUC-PR calculation for epoch: {self.current_epoch}")
             self.validation_outputs = []
 
     def on_test_epoch_start(self):
@@ -842,7 +858,7 @@ class Segmentation_training_loop(pl.LightningModule):
     
     def on_test_epoch_end(self):
         # Ensure test_outputs has been populated
-        logger.info(f'+++++++++++++    on test epoch end')
+        logger.debug(f'+++++++++++++    on test epoch end')
         if not self.test_outputs:
             raise ValueError("---test outputs are empty. Check your test_step implementation.")
         # Aggregate outputs
@@ -863,17 +879,17 @@ class Segmentation_training_loop(pl.LightningModule):
         masks_np = masks_np[valid_mask]
 
         # Debugging statistics
-        logger.info(f"Test AUC-PR calculation:")
-        logger.info(f"Total test pixels: {len(masks_np)}")
-        logger.info(f"Logits Stats - Min: {logits_np.min()}, Max: {logits_np.max()}, Mean: {logits_np.mean()}")
+        logger.debug(f"Test AUC-PR calculation:")
+        logger.debug(f"Total test pixels: {len(masks_np)}")
+        logger.debug(f"Logits Stats - Min: {logits_np.min()}, Max: {logits_np.max()}, Mean: {logits_np.mean()}")
         unique_classes, class_counts = np.unique(masks_np, return_counts=True)
-        logger.info(f"Unique classes: {unique_classes}")
-        logger.info(f"Class counts: {class_counts}")
-        logger.info(f"Class distribution: {dict(zip(unique_classes, class_counts))}")
+        logger.debug(f"Unique classes: {unique_classes}")
+        logger.debug(f"Class counts: {class_counts}")
+        logger.debug(f"Class distribution: {dict(zip(unique_classes, class_counts))}")
 
         # Handle edge cases (e.g., single-class masks)
         if len(unique_classes) < 2:
-            logger.info("---Skipping AUC-PR calculation due to insufficient class variability.")
+            logger.debug("---Skipping AUC-PR calculation due to insufficient class variability.")
             return
 
         # Compute Precision-Recall and AUC
@@ -882,7 +898,7 @@ class Segmentation_training_loop(pl.LightningModule):
         f1_scores = 2 * (precision * recall) / (precision + recall + 1e-8)  # Avoid division by zero
         best_index = f1_scores.argmax()
         best_threshold = thresholds[best_index]
-        logger.info(f"---Best Threshold: {best_threshold}, F1-Score: {f1_scores[best_index]}")
+        logger.debug(f"---Best Threshold: {best_threshold}, F1-Score: {f1_scores[best_index]}")
         aucpr_plot = plot_auc_pr(recall, precision, thresholds, best_index, best_threshold)
         self.logger.experiment.log({
         "Precision-Recall Curve": wandb.Image(aucpr_plot),
@@ -897,7 +913,7 @@ class Segmentation_training_loop(pl.LightningModule):
         probs = torch.sigmoid(logits) 
         preds = (probs > self.metric_threshold).int()
         batch_size = logits.shape[0]
-        # logger.info(f'---metric threshod={mthresh}')
+        # logger.debug(f'---metric threshod={mthresh}')
         if valid.sum() == 0:
         # skip batch that contains only ignore pixels
             return torch.tensor(0.), torch.tensor(0.), torch.tensor(0.), torch.tensor(0.)

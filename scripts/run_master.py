@@ -129,11 +129,11 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         print("========== TRAINING MODE ==========")
  
         if fine_tune:
-            logger.info("\nFINE TUNING FROM TRAINING CKPT\n")
+            print("\nFINE TUNING FROM TRAINING CKPT\n")
     elif inference:
         job_type = "inference"
         print("\n" + "="*40 + "\nINFERENCE MODE\n" + "="*40 )
-        logger.info("\nNEEDS TO 'MAKE TIFFS' TO ENABLE NORMALISATION. WILL NOT MAKE DATACUBE. TILE DIRECTLY FROM THE NORAMLISED TIFS.\n" + "="*50 + "\n")
+        logger.info("\nNEEDS TO 'MAKE TIFFS' TO ENABLE NORMALISATION.\n WILL NOT MAKE DATACUBE. \nTILE DIRECTLY FROM THE NORMALISED TIFS.\n" + "="*50 + "\n")
 
     device = pick_device()                       
     logger.debug(f" Using device: {device}")
@@ -157,12 +157,18 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         raise FileNotFoundError("Required paths validation failed. See errors above.")
     #......................................................
     # CONFIGURATION PARAMETERS
-
-    DUAL_BAND_INPUT = False # True for dual band VV+VH input, False for single band (multi-file) input
-    input_is_linear = True  # True for copernicus direct downloads, False for Sen1floods11
+    DUAL_BAND_INPUT = False
+    if train or test:
+        DUAL_BAND_INPUT = True # True for dual band VV+VH input, False for single band (multi-file) input
+    if train or test:
+        # False for Sen1floods11
+        input_is_linear = False
+    elif inference:
+        # True for copernicus direct downloads
+        input_is_linear = True    
     # Training parameters
     dataset_name = "sen1floods11"  # "sen1floods11" or "copernicus_floods"
-    run_name = "_rhoneleman"
+    run_name = "_argh"
     TRAINING_DATA_PRETILED = True
     subset_fraction = 1
     batch_size = 8 # 8 is tested as optimal for the macbook
@@ -191,7 +197,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     # Initialize variables
     stitched_img_path = None  # Will be set later based on mode
     # INFERENCE CONFIGURATION
-    output_filename = '_sauvbelin'
+    # output_filename = '_argh'
     # sensor = 'S1'
     # date= '030126'
     threshold = 0.5 # THRESHOLD FOR METRICS + STITCHING. used in train class and inference stitching
@@ -226,7 +232,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         inference_paths = paths.get_inference_paths(
             tile_size=tile_size, 
             threshold=threshold,
-            output_filename=output_filename
+            output_filename=run_name
         )
         file_list_csv_path = inference_paths['file_list_csv_path']
         image_tiles_path = inference_paths['image_tiles_path']
@@ -244,9 +250,9 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     
         working_path = paths.predictions_path
         stitched_img_path = inference_paths['stitched_image']
-        stitched_img_path = working_path /  f'{dataset_name}_{timestamp}_{tile_size}_{threshold}_{output_filename}.tif'
+        stitched_img_path = working_path /  f'{dataset_name}_{timestamp}_{tile_size}_{threshold}_{run_name}.tif'
         if stitched_img_path.exists():
-            logger.info(f"overwriting existing file! : {stitched_img_path}")
+            logger.info(f"overwriting existing file! : {stitched_img_path.name}")
 
     if config:
         if not paths.main_config.exists():
@@ -292,8 +298,8 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     )
     config = wandb.config
     if loss_description == "focal":
-        logger.info(f"focal_alpha: {wandb.config.get('focal_alpha', 'Not Found')}")
-        logger.info(f"focal_gamma: {wandb.config.get('focal_gamma', 'Not Found')}")
+        logger.debug(f"focal_alpha: {wandb.config.get('focal_alpha', 'Not Found')}")
+        logger.debug(f"focal_gamma: {wandb.config.get('focal_gamma', 'Not Found')}")
         loss_desc = f"{loss_description}_{config.focal_alpha}_{config.focal_gamma}" 
     elif loss_description == "bce_dice":
         loss_desc = f"{loss_description}_{config.bce_weight}"
@@ -362,7 +368,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
                 raise ValueError(f"DUAL_BAND_INPUT is True but multiple .tif files found in {predict_input}")
         
             image = valid_files[0]  # Take the first valid .tif file
-            logger.info(f"--- Image to process: {image}")
+            logger.debug(f"--- Image to process: {image}")
 
             if not image or not image.is_file():
                 logger.error(f"Image not found: {image}")
@@ -486,7 +492,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         if not extracted.exists():
             # create the directory if it does not exist
             extracted.mkdir(parents=True, exist_ok=True)
-            logger.info(f"--- Created extract directory: {extracted}")
+            logger.debug(f"--- Created extract directory: {extracted}")
 
 
             # raise FileNotFoundError(f"extract directory not found: {extracted}")
@@ -501,7 +507,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
             logger.info("Tiling directly from GeoTIFF for inference")
 
             if image_tiles_path.exists():
-                logger.info(f"Deleting existing inference tiles: {image_tiles_path}")
+                logger.debug(f"Deleting existing inference tiles: {image_tiles_path}")
                 shutil.rmtree(image_tiles_path)
             image_tiles_path.mkdir(exist_ok=True, parents=True)
             logger.debug(f"About to tile from:")
@@ -518,8 +524,8 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
 
             # Check image dimensions
             with rasterio.open(vv_image_path) as src:
-                logger.info(f"VV image dimensions: {src.shape}")
-                logger.info(f"VV image size: height={src.height}, width={src.width}")
+                logger.debug(f"VV image dimensions: {src.shape}")
+                logger.debug(f"VV image size: height={src.height}, width={src.width}")
 
             # Tile directly from GeoTIFF
             tiles, metadata = tile_geotiff_directly(
@@ -537,7 +543,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
                 logger.error("Cannot create tiles: no data cube available")
                 return
             if image_tiles_path.exists():
-                logger.info(f"Deleting existing inference tiles folder: {image_tiles_path}")
+                logger.debug(f"Deleting existing inference tiles folder: {image_tiles_path}")
                 shutil.rmtree(image_tiles_path)
             image_tiles_path.mkdir(exist_ok=True, parents=True)
             extracted.mkdir(exist_ok=True, parents=True)
@@ -610,7 +616,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
             val_subset_fraction = max(subset_fraction, 0.8)  # Use at least 80% of validation data
             val_subset_indices = random.sample(range(len(val_dataset)), int(val_subset_fraction * len(val_dataset)))
             val_dataset = Subset(val_dataset, val_subset_indices)
-            logger.info(f"Using {subset_fraction} of training data and {val_subset_fraction} of validation data")
+            logger.debug(f"Using {subset_fraction} of training data and {val_subset_fraction} of validation data")
         
         # Create dataloaders
         train_dl = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, persistent_workers=persistent_workers)
@@ -819,7 +825,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
             ims_list = list(pred_tiles_path.glob("*.tif"))
             if len(ims_list) > 0:
                 # Load metadata for stitching
-                logger.info(f"Loading metadata from: {metadata_path}")
+                logger.debug(f"Loading metadata from: {metadata_path}")
                 if not metadata_path.exists():
                     return
 
@@ -830,15 +836,15 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
 
         input_image = next(extracted.rglob("*.tif"), None) if extracted.exists() else None
         if input_image and ('vv' in input_image.name.lower() or 'vh' in input_image.name.lower()) and input_image.suffix.lower() == '.tif':
-            logger.info(f"ref image for stitching: {input_image}")
-            logger.info(f"pred_tiles_path: {pred_tiles_path}")
-            logger.info(f'extracted folder: {extracted}')
+            logger.debug(f"ref image for stitching: {input_image}")
+            logger.debug(f"pred_tiles_path: {pred_tiles_path}")
+            logger.debug(f'extracted folder: {extracted}')
             stitch_tiles(metadata, pred_tiles_path, stitched_img_path, input_image, tile_size, stride, threshold)
         else:
             logger.warning(f"No suitable input image found in {extracted} for stitching")
             logger.info("Prediction tiles created but stitching skipped")  
   
-
+    print("\n" + "="*40 + "\nFINISHED STITCHING IMAGE\nRUN COMPLETE\n" + "="*40 + "\n")
     # Cleanup
     run_time = (time.time() - start) / 60
     print(f" Total runtime: {run_time:.2f} minutes")
