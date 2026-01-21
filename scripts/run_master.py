@@ -103,8 +103,8 @@ signal.signal(signal.SIGINT, handle_interrupt)
 @click.option('--test', is_flag=True, help="Test the model")
 @click.option('--inference', is_flag=True, help="Run inference on a copernicus S1 image")
 @click.option('--config', is_flag=True, help='loading from config')
-@click.option('--fine_tune', is_flag=True, default=None, help="fine tune from training ckpt")
-@click.option('--ckpt_input', is_flag=True, default=None, help="ckpt path is 'training folder or input folder'")
+@click.option('--fine_tune', is_flag=True, default=False, help="fine tune from training ckpt")
+@click.option('--ckpt_input', is_flag=True, default=False, help="ckpt path is 'training folder or input folder'")
 
 # //////////////////   MAIN   ///////////////////////
 
@@ -177,7 +177,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     patience = 3
     num_workers = 0 
     # Logging and model parameters
-    WandB_online = True
+    WandB_online = True #////////
     LOGSTEPS = 50
     PRETRAINED = True
     in_channels = 2 # TODO ???
@@ -202,9 +202,8 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     # date= '030126'
     threshold = 0.5 # THRESHOLD FOR METRICS + STITCHING. used in train class and inference stitching
     # ........................................................
-    if input_is_linear:
-        print("="*40 +f'\nINPUT IS LINEAR = {input_is_linear}')
-    else:
+    print("="*40 +f'\nINPUT IS LINEAR = {input_is_linear}')
+    if not input_is_linear:
         print("="*40 +f'\nINPUT IS dB')
     if DUAL_BAND_INPUT:
         print("="*40 +f'\nDUAL BAND INPUT = {DUAL_BAND_INPUT}')
@@ -323,8 +322,12 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     if stats_file.exists():
         with open(stats_file, 'r') as f:
             stats = json.load(f)
-        db_min = stats['global_minmax']['db_min']
-        db_max = stats['global_minmax']['db_max']
+        db_min = stats['db_min']
+        db_max = stats['db_max']
+        vv_mean = stats['vv_mean']
+        vv_std = stats['vv_std']
+        vh_mean = stats['vh_mean']
+        vh_std = stats['vh_std']
         print(F'USING GLOBAL dB MIN {db_min:.2f} AND dB MAX {db_max:.2f}')
     else:
         logger.warning(f"No dataset statistics found at {stats_file}")
@@ -594,7 +597,11 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
             image_code=paths.image_code,
             input_is_linear=input_is_linear,
             db_min=db_min,
-            db_max=db_max)
+            db_max=db_max,
+            vv_mean = vv_mean,
+            vv_std = vv_std,   
+            vh_mean = vh_mean,
+            vh_std = vh_std)
         
         # Validation dataset
         val_dataset = Sen1Dataset(
@@ -606,7 +613,11 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
             image_code=paths.image_code,
             input_is_linear=input_is_linear,
             db_min=db_min,
-            db_max=db_max)
+            db_max=db_max,
+            vv_mean = vv_mean,
+            vv_std = vv_std,   
+            vh_mean = vh_mean,
+            vh_std = vh_std)
         
         # Apply subset if needed
         if subset_fraction < 1:
@@ -633,8 +644,10 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
             csv_path=paths.test_csv,
             image_code=paths.image_code,
             input_is_linear=input_is_linear,
-            db_min=db_min,
-            db_max=db_max)
+            vv_mean = vv_mean,
+            vv_std = vv_std,   
+            vh_mean = vh_mean,
+            vh_std = vh_std)
         
         # Apply subset if needed
         if subset_fraction < 1:
@@ -655,7 +668,11 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
             image_code=image_code,
             input_is_linear=input_is_linear,
             db_min=db_min,
-            db_max=db_max)
+            db_max=db_max,
+            vv_mean = vv_mean,
+            vv_std = vv_std,   
+            vh_mean = vh_mean,
+            vh_std = vh_std)
         
         subset_indices = random.sample(range(len(inference_dataset)), int(subset_fraction * len(inference_dataset)))
         inference_subset = Subset(inference_dataset, subset_indices)

@@ -248,10 +248,12 @@ class Sen1Dataset(Dataset):
         csv_path:       Path,
         image_code:     str,        # e.g. "myevent"
         input_is_linear: bool,
-        db_min:         float = -30.0,
-        db_max:         float =   0.0,
-        db_mean:        List[float] = None,
-        db_std:         List[float] = None,
+        db_min:         float,
+        db_max:         float,
+        vv_mean:        float,  
+        vv_std:         float,
+        vh_mean:        float,
+        vh_std:         float,
     ):
         assert job_type in ("train","val", "test", "inference")
         self.job_type        = job_type
@@ -260,8 +262,10 @@ class Sen1Dataset(Dataset):
         self.input_is_linear = input_is_linear
         self.db_min          = db_min
         self.db_max          = db_max
-        self.db_mean         = db_mean
-        self.db_std          = db_std
+        self.vv_mean         = vv_mean
+        self.vv_std          = vv_std
+        self.vh_mean         = vh_mean
+        self.vh_std          = vh_std
 
         # will hold full Paths to files
         self.img_paths:  List[Path] = []
@@ -273,7 +277,7 @@ class Sen1Dataset(Dataset):
             tile_path = images_path
             mask_path = labels_path
 
-        
+        print('db_min=',db_min,' db_max=',db_max,' vv_mean=',vv_mean,' vv_std=',vv_std,' vh_mean=',vh_mean,' vh_std=',vh_std)
         # 1) parse the CSV
 
         with csv_path.open() as f:
@@ -402,24 +406,26 @@ class Sen1Dataset(Dataset):
         # BLANK INVALID PIXELS
         vv_arr[~valid_np] = np.nan
         vh_arr[~valid_np] = np.nan
-
          
         for i, arr in enumerate([vv_arr, vh_arr]):
-            # LOG→CLIP→MINMAX→[0,1]
             if self.input_is_linear:
+
                 #  CLIP TINY VALS
                 np.clip(arr, 1e-6, None, out=arr)
+
                 # CONVERT TO DB
                 np.log10(arr, out=arr)
                 arr *= 10.0
+
                 # SWAP NANS FOR SOEMTHING FINITE
                 np.nan_to_num(
                     arr,
                 copy=False,
-                nan=self.db_mean[i],
+                nan=self.db_min,
                 posinf=self.db_max,
                 neginf=self.db_min,
                 )
+
             # CLIP TO TRAINING MIN/MAX
             np.clip(arr, self.db_min, self.db_max, out=arr)
 
@@ -428,8 +434,17 @@ class Sen1Dataset(Dataset):
             # arr /= (self.db_max - self.db_min)
 
             # MEAN/STANDARD  NORMALISATION
-            arr -= self.db_mean[i]  # e.g. ~-12 for VV, ~-20 for VH
-            arr /= self.db_std[i]   # e.g. ~6-8 for both
+            if i == 0:  # VV
+                arr -= self.vv_mean  # e.g. ~-12 for VV, ~-20 for VH
+                arr /= self.vv_std   # e.g. ~6-8 for both
+            else:       # VH
+
+                arr -= self.vh_mean  # e.g. ~-12 for VV, ~-20 for VH
+                arr /= self.vh_std   # e.g. ~6-8 for both
+
+        # Safety: replace any residual NaN/Inf with finite values to avoid breaking loaders
+        np.nan_to_num(vv_arr, nan=self.db_min, posinf=self.db_max, neginf=self.db_min, copy=False)
+        np.nan_to_num(vh_arr, nan=self.db_min, posinf=self.db_max, neginf=self.db_min, copy=False)
 
         # stack & convert to tensor
         img_tensor = torch.from_numpy(np.stack([vv_arr, vh_arr], axis=0))
@@ -531,8 +546,15 @@ class Segmentation_training_loop(pl.LightningModule):
         images, masks, valids, fnames = batch
 
         if torch.isnan(images).any() or torch.isinf(images).any():
-            logger.debug(f"VAl STEP - Batch {batch_idx} - Input contains NaN or Inf")
-            logger.debug(f"Mean: {images.mean()}, Std: {images.std()}, Min: {images.min()}, Max: {images.max()}")
+            # Log detailed stats to pinpoint the bad tiles
+            logger.error(f"VAL STEP - Batch {batch_idx} - Input contains NaN or Inf")
+            logger.error(f"Filenames: {fnames}")
+            logger.error(f"Mean: {images.mean()}, Std: {images.std()}, Min: {images.min()}, Max: {images.max()}")
+            logger.error(f"VV min/max: {images[:, 0].min()}/{images[:, 0].max()}")
+            logger.error(f"VH min/max: {images[:, 1].min()}/{images[:, 1].max()}")
+            # Also check masks/valids just in case
+            logger.error(f"Masks min/max: {masks.min()}/{masks.max()}")
+            logger.error(f"Valids min/max: {valids.min()}/{valids.max()}")
             raise ValueError(f"Input contains NaN or Inf at batch {batch_idx}")
 
         images, masks, valids  = images.to(self.device), masks.to(self.device), valids.to(self.device)

@@ -1,2 +1,8 @@
 {
-    "db_min": 
+    "db_min": -60.96,
+    "db_max": 11.0,
+    "vv_mean": -10.44,
+    "vv_std": 4.17,
+    "vh_mean": -17.31,
+    "vh_std": 4.88
+}
