@@ -87,6 +87,35 @@ from scripts.paths_class import ProjectPaths
 
 start = time.time()
 
+
+def prepare_inference_band(input_path: Path, extracted: Path) -> Path:
+    """
+    Convert a single-band inference raster to float32 and reproject to EPSG:4326
+    when the source CRS does not already match the training contract.
+    """
+    input_path = Path(input_path)
+    extracted = Path(extracted)
+
+    with rasterio.open(input_path) as src:
+        if src.crs is None:
+            raise ValueError(f"Inference raster has no CRS: {input_path}")
+        logger.info(
+            f"---Preparing {input_path.name}: crs={src.crs}, res={src.res}, dtype={src.dtypes[0]}"
+        )
+        needs_reproject = src.crs.to_string() != "EPSG:4326"
+
+    float32_path = extracted / f"{input_path.stem}_float32.tif"
+    make_float32_inf(input_path, float32_path)
+
+    if needs_reproject:
+        reproj_path = extracted / f"{input_path.stem}_epsg4326.tif"
+        reproject_to_4326_gdal(float32_path, reproj_path, resampleAlg="bilinear")
+        logger.info(f"---Reprojected inference raster saved to {reproj_path}")
+        return reproj_path
+
+    logger.info(f"---Inference raster already in EPSG:4326: {float32_path}")
+    return float32_path
+
 # Suppress num_workers warning - we've tested and num_workers=0 is optimal for our dataset
 warnings.filterwarnings('ignore', '.*does not have many workers.*')
 
@@ -440,6 +469,11 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
             vh_image_path = extracted / 'vh_copy.tif'
 
             logger.debug(f"Copied VH to: {vh_image_path}")
+
+
+        if inference and vv_image_path and vh_image_path:
+            vv_image_path = prepare_inference_band(vv_image_path, extracted)
+            vh_image_path = prepare_inference_band(vh_image_path, extracted)
 
 
         if True:
