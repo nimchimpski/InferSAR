@@ -23,8 +23,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-mode = 'inference' 
-# mode = 'train' 
+# mode = 'inference' 
+mode = 'train' 
 
 
 def main():
@@ -61,7 +61,7 @@ def main():
             try:
                 with rasterio.open(image) as src:
                     # Inspect basic raster metadata for sanity
-                    print(f"  dtype={src.dtypes}, count={src.count}, crs={src.crs}")
+                    # print(f"  dtype={src.dtypes}, count={src.count}, crs={src.crs}")
                     for band_to_read in range(1, src.count + 1):
                         # Read the data as a NumPy array
                         # print(f"Processing band {band_to_read}" )
@@ -84,8 +84,8 @@ def main():
                         # Show scale/offset/statistics tags if present
                         band_tags = src.tags(band_to_read)
                         brief_tags = {k: band_tags[k] for k in band_tags.keys() if k.upper() in {"SCALE", "OFFSET", "UNITTYPE", "STATISTICS_MINIMUM", "STATISTICS_MAXIMUM", "STATISTICS_MEAN", "STATISTICS_STDDEV"}}
-                        if brief_tags:
-                            print(f"    band {band_to_read} ({desc}) tags: {brief_tags}")
+                        # if brief_tags:
+                        #     print(f"    band {band_to_read} ({desc}) tags: {brief_tags}")
                         raw_min, raw_max = data.min(), data.max()
                         # CREATE A VALID MASK
                         valid = src.dataset_mask().astype(bool)
@@ -98,10 +98,10 @@ def main():
                             lin_p = np.nanpercentile(valid_data, [0.1, 1, 5, 50, 95, 99, 99.9])
                             db_vals = 10.0 * np.log10(np.clip(valid_data, 1e-6, None))
                             db_p = np.nanpercentile(db_vals, [0.1, 1, 5, 50, 95, 99, 99.9])
-                            print(
-                                "    percentiles lin(dB): "
-                                f"lin={np.round(lin_p, 6).tolist()} | dB={np.round(db_p, 3).tolist()}"
-                            )
+                            # print(
+                            #     "    percentiles lin(dB): "
+                            #     f"lin={np.round(lin_p, 6).tolist()} | dB={np.round(db_p, 3).tolist()}"
+                            # )
                         if mode == 'train':
                             # CLAMP TO REALISTIC SAR dB RANGE
                             valid_data = valid_data[(valid_data >= -60) & (valid_data <= 10)]
@@ -169,7 +169,7 @@ def main():
         print(f"Min, max, std, mean values saved to {output_path}")
 
     # In inference mode, compare dB-converted values against training JSON stats
-    if mode == 'inference':
+    if mode == 'train':
         stats_path = project_path / 'configs' / 'global_minmax_INPUT' / 'global_minmax.json'
         try:
             with open(stats_path, 'r') as f:

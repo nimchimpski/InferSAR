@@ -22,39 +22,41 @@ def main():
     Anything that's an array or list →
     '''
     print('++++++++++SINGLE TILE CHECK+++++++++++++X')
-    tile_path = Path('/Users/alexwebb/laptop_coding/floodai/InferSAR/data/4final/predict_input/2026-01-09-00:00_2026-01-09-23:59_Sentinel-1_IW_VV+VH_VH_(Raw).tiff')
-
-    with rasterio.open(tile_path) as src:
-        data = src.read()
-        if np.isnan(data).any():
-            logger.warning("Warning: NaN values found in the data.")
-
-        resolution = src.res  # Or alternatively src.transform.a, src.transform.e
-        print(f"---Band count:    {src.count}")
-        print('---Tags:',src.tags())  # Look for orbit/pass direction metadata
-        print('---Meta:', src.meta)
-        print("---Descriptions:", src.descriptions)
-        for i in range(src.count):
-            print(f'--- Band {i} ---')
-            band_data = src.read(i+1)
-            valid_data = band_data[np.isfinite(band_data)]
-            min, max = min_max_vals(valid_data)
-
-            # Handle missing/empty descriptions
-            name = src.descriptions[i].lower() if src.descriptions[i] else f"Band_{i}"
-
-            numvals =  num_band_vals(valid_data)
-            print(f"-Band name: {name}: Min={min}, Max={max}")
-            print(f"---num unique vals = {numvals}")
-            print(f"---CRS: {src.crs}")
-            print(f"---Width×Height:  {src.width} × {src.height}")
-            print(f"---Transform:     {src.transform}")
-            px, py = src.res
-            print(f"---Pixel size:    {px} × {py}")
-            print(f"---Data type:     {src.dtypes[0]}")
-            print(f'---resolution= {src.res}')
-            print('----------------------------------')
-
+    img_path1 = Path('data/1raw/pc_bangladesh/S1A_IW_GRDH_1SDV_20251231T121235_20251231T121300_062559_07D726_vv_vh_linear_stacked.tif')
+    img_path2 = Path('data/4final/sen1floods11/S1Hand/Bolivia_60373_S1Hand.tif')
+    for tile_path in [img_path1, img_path2]:
+        print(f"Inspecting tile: {tile_path}")
+        with rasterio.open(tile_path) as src:
+            data = src.read()
+            if np.isnan(data).any():
+                logger.warning("Warning: NaN values found in the data.")
+    
+            resolution = src.res  # Or alternatively src.transform.a, src.transform.e
+            print(f"---Band count:    {src.count}")
+            print('---Tags:',src.tags())  # Look for orbit/pass direction metadata
+            print('---Meta:', src.meta)
+            print("---Descriptions:", src.descriptions)
+            for i in range(src.count):
+                print(f'--- Band {i} ---')
+                band_data = src.read(i+1)
+                valid_data = band_data[np.isfinite(band_data)]
+                min, max = min_max_vals(valid_data)
+    
+                # Handle missing/empty descriptions
+                name = src.descriptions[i].lower() if src.descriptions[i] else f"Band_{i}"
+    
+                numvals =  num_band_vals(valid_data)
+                print(f"-Band name: {name}: Min={min}, Max={max}")
+                print(f"---num unique vals = {numvals}")
+                print(f"---CRS: {src.crs}")
+                print(f"---Width×Height:  {src.width} × {src.height}")
+                print(f"---Transform:     {src.transform}")
+                px, py = src.res
+                print(f"---Pixel size:    {px} × {py}")
+                print(f"---Data type:     {src.dtypes[0]}")
+                print(f'---resolution= {src.res}')
+                print('----------------------------------')
+    
 
                 
 if __name__ == "__main__":
