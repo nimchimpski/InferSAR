@@ -144,11 +144,11 @@ def main():
             return
 
     # Build scene id from the VV filename so this works for both fetched and offline modes.
-    scene_id = vv_path.stem.removesuffix("_vv")
+    # scene_id = vv_path.stem.removesuffix("_vv")
 
     # Stack bands
-    final_output = OUTPUT_DIR / f"{scene_id}_vv_vh_stacked.tif"
-    stack_vv_vh(vv_path, vh_path, str(final_output))
+    # final_output = OUTPUT_DIR / f"{scene_id}_vv_vh_stacked.tif"
+    # stack_vv_vh(vv_path, vh_path, str(final_output))
     
     # Cleanup (optional; keep by default for offline reuse on slow connections)
     if not KEEP_INTERMEDIATE_BANDS:
@@ -159,8 +159,9 @@ def main():
                 pass
     
     print("\n" + "=" * 40)
-    print(f"Inference-ready stacked image: {final_output}")
-    print("Format: 2 bands (VV, VH), Float32, RTC georeferenced source")
+    # print(f"Inference-ready stacked image: {final_output}")
+    # print("Format: 2 bands (VV, VH), Float32, RTC georeferenced source")
+    print("Format: 2 single files, vv and vh Float32, RTC georeferenced source")
     print("=" * 40)
 
 if __name__ == "__main__":

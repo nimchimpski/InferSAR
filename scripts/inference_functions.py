@@ -226,9 +226,18 @@ def stitch_tiles(metadata, prediction_tiles, save_path, image, tile_size, stride
             # Load the prediction tile
             with rasterio.open(tile_path) as tsrc:
                 tile = tsrc.read(1).astype(np.float32)  # Shape: (tile_h, tile_w)
+
+            # Be defensive at image edges where model output size can differ from metadata window.
+            target_h = max(0, ye - ys)
+            target_w = max(0, xe - xs)
+            if target_h == 0 or target_w == 0:
+                continue
+            h = min(tile.shape[0], target_h)
+            w = min(tile.shape[1], target_w)
+            tile = tile[:h, :w]
             
             # Add tile to canvas (simple addition since there's no overlap)
-            stitched_image[ys:ye, xs:xe] += tile
+            stitched_image[ys:ys + h, xs:xs + w] += tile
         
         # Apply threshold to binarize probabilities
         merged = (stitched_image > threshold).astype(np.float32)
@@ -302,7 +311,13 @@ def stitch_tiles(metadata, prediction_tiles, save_path, image, tile_size, stride
             with rasterio.open(tile_path) as tsrc:
                 tile = tsrc.read(1).astype(np.float32)
 
-            h, w = tile.shape
+            target_h = max(0, ye - ys)
+            target_w = max(0, xe - xs)
+            if target_h == 0 or target_w == 0:
+                continue
+            h = min(tile.shape[0], target_h)
+            w = min(tile.shape[1], target_w)
+            tile = tile[:h, :w]
             
             # Create weight matrix for this tile
             if blend == "avg":

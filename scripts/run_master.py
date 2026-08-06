@@ -187,17 +187,10 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     #......................................................
     # CONFIGURATION PARAMETERS
     DUAL_BAND_INPUT = False
-    if train or test:
-        DUAL_BAND_INPUT = True # True for dual band VV+VH input, False for single band (multi-file) input
-    if train or test:
-        # False for Sen1floods11
-        input_is_linear = False
-    elif inference:
-        # True for copernicus direct downloads
-        input_is_linear = True    
+
     # Training parameters
     dataset_name = "sen1floods11"  # "sen1floods11" or "copernicus_floods"
-    run_name = "_argh"
+    run_name = "_run_name"
     TRAINING_DATA_PRETILED = True
     subset_fraction = 1
     batch_size = 8 # 8 is tested as optimal for the macbook
@@ -231,13 +224,10 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     # date= '030126'
     threshold = 0.5 # THRESHOLD FOR METRICS + STITCHING. used in train class and inference stitching
     # ........................................................
-    print("="*40 +f'\nINPUT IS LINEAR = {input_is_linear}')
-    if not input_is_linear:
-        print("="*40 +f'\nINPUT IS dB')
     if DUAL_BAND_INPUT:
-        print("="*40 +f'\nDUAL BAND INPUT = {DUAL_BAND_INPUT}')
+        print("="*40 +f'\nDUAL BAND INPUT = {DUAL_BAND_INPUT}, NOT CHECKED')
     else:
-        print("="*40 +f'\nINPUT IS SEPERATE , SINGLE BAND FILES')
+        print("="*40 +f'\nINPUT IS SEPERATE , SINGLE BAND FILES, NOT CHECKED!!!')
     print("="*40 +f'\nWandB ONLINE = {WandB_online}')
     if WandB_online:
         print("."*40)
@@ -443,15 +433,15 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
                 logger.debug(f"wrote VV tif at vv_image_path: {vv_image_path}")
                 logger.debug(f"wrote VH tiff at vh_image_path: {vh_image_path}")
         else:
-            print(">>>>DUAL IMAGE INPUT")
+            print(">>>>SEPARATE IMAGE INPUT")
             vv_image_path = None
             vh_image_path = None
 
             for file in predict_input.iterdir():
                 if file.suffix.lower() in ['.tif', '.tiff']:
-                    if '_vv_' in file.name.lower():
+                    if '_vv' in file.name.lower():
                         vv_image_path = file
-                    elif '_vh_' in file.name.lower():
+                    elif '_vh' in file.name.lower():
                         vh_image_path = file
 
             # Verify both files were found
@@ -887,8 +877,8 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
 
         # STITCH PREDICTION TILES /////////////////////////////////////////////
 
-        input_image = next(extracted.rglob("*.tif"), None) if extracted.exists() else None
-        if input_image and ('vv' in input_image.name.lower() or 'vh' in input_image.name.lower()) and input_image.suffix.lower() == '.tif':
+        input_image = vv_image_path if inference else (next(extracted.rglob("*.tif"), None) if extracted.exists() else None)
+        if input_image and input_image.suffix.lower() == '.tif':
             logger.debug(f"ref image for stitching: {input_image}")
             logger.debug(f"pred_tiles_path: {pred_tiles_path}")
             logger.debug(f'extracted folder: {extracted}')
