@@ -243,6 +243,9 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         WandB_online = False
         MAKE_TIFS = True
         MAKE_TILES = True
+        if stride >= tile_size:
+            stride = max(1, int(tile_size * 0.75))
+            logger.info(f"Inference overlap enabled: tile_size={tile_size}, stride={stride}, overlap={tile_size - stride}")
         subset_fraction = 1
         batch_size = 1
         shuffle = False
