@@ -190,7 +190,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
 
     # Training parameters
     dataset_name = "sen1floods11"  # "sen1floods11" or "copernicus_floods"
-    run_name = "_run_name"
+    run_name = "_260105_2306_"
     TRAINING_DATA_PRETILED = True
     subset_fraction = 1
     batch_size = 8 # 8 is tested as optimal for the macbook
@@ -222,7 +222,9 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     # output_filename = '_argh'
     # sensor = 'S1'
     # date= '030126'
-    threshold = 0.2 # THRESHOLD FOR METRICS + STITCHING. used in train class and inference stitching
+    # ***********************
+    threshold = 0.4 # THRESHOLD FOR METRICS + STITCHING.
+    # **********************
     # ........................................................
     if DUAL_BAND_INPUT:
         print("="*40 +f'\nDUAL BAND INPUT = {DUAL_BAND_INPUT}, NOT CHECKED')
