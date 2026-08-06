@@ -5,12 +5,12 @@ This script uses a centralized ProjectPaths class to manage all directory and fi
 making the code more maintainable and easier to understand.
 
 Usage:
-    python run_master_new.py --train    # Train the model
-    python run_master_new.py --test     # Test the model  
-    python run_master_new.py --inference # Run inference
-    python run_master_new.py --config   # Use config file
-    python run_master_new.py --fine_tune # Fine-tune from training checkpoint
-    python run_master_new.py --ckpt_input # Specify checkpoint input folder
+    python run_master.py --train    # Train the model
+    python run_master.py --test     # Test the model  
+    python run_master.py --inference # Run inference
+    python run_master.py --config   # Use config file
+    python run_master.py --fine_tune # Fine-tune from training checkpoint
+    python run_master.py --ckpt_input # Specify checkpoint input folder
 
 If training on multiple regions - consider enabling 'dynamic weighting' to deal with batch differences - and then disable the weighting here:-
  smp_bce =  smp.losses.SoftBCEWithLogitsLoss(ignore_index=255, reduction='mean',pos_weight=torch.tensor([8.0]))
