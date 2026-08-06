@@ -21,6 +21,132 @@ logger = logging.getLogger(__name__)
 def handle_interrupt(signum, frame):
     logger.info("\nCustom signal handler: SIGINT received. Exiting.")
     sys.exit(0)
+
+
+def _sample_valid_band_values(src, band_index, sample_size, rng):
+    arr = src.read(band_index).astype(np.float32)
+    valid = src.dataset_mask().astype(bool)
+    vals = arr[valid & np.isfinite(arr)]
+
+    if vals.size == 0:
+        return vals
+
+    if vals.size > sample_size:
+        idx = rng.choice(vals.size, size=sample_size, replace=False)
+        vals = vals[idx]
+
+    return vals
+
+
+def _resolve_scale_from_samples(samples):
+    values = np.concatenate(samples)
+
+    p1, p50, p99 = np.percentile(values, [1, 50, 99])
+    frac_lt_zero = float(np.mean(values < 0))
+    vmin = float(values.min())
+    vmax = float(values.max())
+
+    stats = {
+        "min": vmin,
+        "max": vmax,
+        "p1": float(p1),
+        "p50": float(p50),
+        "p99": float(p99),
+        "frac_lt_zero": frac_lt_zero,
+    }
+
+    logger.info(
+        "Input scale check: "
+        f"min={vmin:.6f}, max={vmax:.6f}, "
+        f"p1={p1:.6f}, p50={p50:.6f}, p99={p99:.6f}, "
+        f"frac<0={frac_lt_zero:.6f}"
+    )
+
+    # Strongly negative distributions are already in dB.
+    if p50 < -1.0 or p1 < -5.0 or frac_lt_zero > 0.05:
+        return False, False, stats
+
+    # Predominantly positive distributions with substantial upper tail are linear.
+    if p99 > 1.0 and frac_lt_zero < 0.01:
+        return True, False, stats
+
+    # Conservative fallback for ambiguous cases keeps previous inference behavior.
+    logger.warning("Scale detection ambiguous; defaulting to linear input.")
+    return True, True, stats
+
+
+def detect_input_is_linear(vv_path, vh_path, sample_size=200000, seed=42, return_stats=False):
+    """
+    Infer whether SAR input values are linear power or already in dB.
+
+    Returns:
+        bool: True if values look linear, False if values look like dB.
+    """
+    rng = np.random.default_rng(seed)
+    samples = []
+
+    for raster_path in (Path(vv_path), Path(vh_path)):
+        with rasterio.open(raster_path) as src:
+            vals = _sample_valid_band_values(src, band_index=1, sample_size=sample_size, rng=rng)
+            if vals.size == 0:
+                logger.warning(f"No valid pixels found in {raster_path.name} for scale detection.")
+                continue
+            samples.append(vals)
+
+    if not samples:
+        logger.warning("Scale detection found no valid samples; defaulting to linear input.")
+        if return_stats:
+            return True, {"ambiguous": True, "reason": "no_valid_samples"}
+        return True
+
+    is_linear, ambiguous, stats = _resolve_scale_from_samples(samples)
+    stats["ambiguous"] = ambiguous
+    if return_stats:
+        return is_linear, stats
+    return is_linear
+
+
+def detect_input_is_linear_multiband(image_path, band_indices=(1, 2), sample_size=200000, seed=42, return_stats=False):
+    """
+    Infer whether a multi-band SAR raster stores linear power or dB values.
+
+    Args:
+        image_path: Path to a multi-band raster.
+        band_indices: 1-based band indices to sample (default VV/VH = 1,2).
+
+    Returns:
+        bool by default, or tuple(bool, stats) when return_stats=True.
+    """
+    rng = np.random.default_rng(seed)
+    samples = []
+
+    with rasterio.open(Path(image_path)) as src:
+        for band_index in band_indices:
+            if band_index < 1 or band_index > src.count:
+                logger.warning(
+                    f"Band {band_index} not available in {Path(image_path).name}; skipping."
+                )
+                continue
+
+            vals = _sample_valid_band_values(src, band_index=band_index, sample_size=sample_size, rng=rng)
+            if vals.size == 0:
+                logger.warning(
+                    f"No valid pixels found in band {band_index} of {Path(image_path).name} for scale detection."
+                )
+                continue
+            samples.append(vals)
+
+    if not samples:
+        logger.warning("Scale detection found no valid samples; defaulting to linear input.")
+        if return_stats:
+            return True, {"ambiguous": True, "reason": "no_valid_samples"}
+        return True
+
+    is_linear, ambiguous, stats = _resolve_scale_from_samples(samples)
+    stats["ambiguous"] = ambiguous
+    if return_stats:
+        return is_linear, stats
+    return is_linear
 # CHECKS FOR INITIAL FOLDERS
 
 def check_single_input_filetype(folder,  title, fsuffix1, fsuffix2):

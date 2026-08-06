@@ -76,7 +76,7 @@ from datetime import datetime
 project_path = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_path))
 
-from scripts.process.process_helpers import handle_interrupt, read_minmax_from_json, print_tiff_info_TSX
+from scripts.process.process_helpers import handle_interrupt, read_minmax_from_json, print_tiff_info_TSX, detect_input_is_linear
 from scripts.process.process_tiffs import create_event_datacube_copernicus, reproject_to_4326_gdal, make_float32_inf, resample_tiff_gdal, tile_geotiff_directly
 from scripts.process.process_dataarrays import tile_datacube_rxr_inf
 from scripts.train.train_helpers import is_sweep_run, pick_device
@@ -474,6 +474,8 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         if inference and vv_image_path and vh_image_path:
             vv_image_path = prepare_inference_band(vv_image_path, extracted)
             vh_image_path = prepare_inference_band(vh_image_path, extracted)
+            input_is_linear = detect_input_is_linear(vv_image_path, vh_image_path)
+            logger.info(f"Resolved inference input scale: {'linear' if input_is_linear else 'dB'}")
 
 
         if True:

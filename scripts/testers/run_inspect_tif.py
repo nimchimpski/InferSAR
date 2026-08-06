@@ -8,6 +8,7 @@ import logging
 from tqdm import tqdm
 import shutil  # For safely replacing files
 from scripts.process.process_helpers import get_band_name, min_max_vals, num_band_vals, datatype_check, check_single_tile, print_tiff_info_TSX, nan_check
+from scripts.process.process_helpers import detect_input_is_linear_multiband
 
 logging.basicConfig(
     level=logging.INFO,                            # DEBUG, INFO,[ WARNING,] ERROR, CRITICAL
@@ -30,6 +31,16 @@ def main():
             data = src.read()
             if np.isnan(data).any():
                 logger.warning("Warning: NaN values found in the data.")
+
+            if src.count >= 2:
+                is_linear, stats = detect_input_is_linear_multiband(tile_path, return_stats=True)
+                scale = 'linear' if is_linear else 'dB'
+                print(f"---Shared scale check: {scale}")
+                print(
+                    f"---scale stats: min={stats.get('min')}, max={stats.get('max')}, "
+                    f"p1={stats.get('p1')}, p50={stats.get('p50')}, p99={stats.get('p99')}, "
+                    f"frac_lt_zero={stats.get('frac_lt_zero')}, ambiguous={stats.get('ambiguous')}"
+                )
     
             resolution = src.res  # Or alternatively src.transform.a, src.transform.e
             print(f"---Band count:    {src.count}")

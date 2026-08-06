@@ -1,38 +1,90 @@
 -There are google keep notes and sketches
 
-TRAIN MODE:
+===INFO COMPARISON OF S1F11 IMG AND IMG FROM PC_DOWNLOAD.PY===
 
-TEST MODE:
+(floodai_train) alexwebb@Alexs-MacBook-Air inferSAR % python -m scripts.testers.run_comp
+are_tifs
+++++++++++TIFF COMPARISON+++++++++++++
 
-INFERENCE MODE:
-MAKE TIFS = TRUE 
-Then choose single or multiband input
+======================== Planetary Computer ========================
+Path:         data/1raw/pc_bangladesh/S1A_IW_GRDH_1SDV_20251231T121235_20251231T121300_062559_07D726_rtc_vv_vh_stacked.tif
+Band count:   2
+Descriptions: ('VV', 'VH')
+CRS:          EPSG:32645
+Size:         28654 x 21679
+Resolution:   (10.0, 10.0)
+Transform:    (10.0, 0.0, 514480.0, 0.0, -10.0, 2631690.0, 0.0, 0.0, 1.0)
+Nodata:       -32768.0
+Tags:         {'AREA_OR_POINT': 'Area', 'source_collection': 'sentinel-1-rtc', 'source_vh': 'S1A_IW_GRDH_1SDV_20251231T121235_20251231T121300_062559_07D726_rtc_vh.tif', 'source_vv': 'S1A_IW_GRDH_1SDV_20251231T121235_20251231T121300_062559_07D726_rtc_vv.tif'}
 
-input = VV + VH tifs
-MAKE_TILES = True
-- as we didnt create a datacube, conditiponaly tile direct from normalised Tifs
-- this where input images are normalised.
-MAKE_DATACUBE = False
-- this is too expensive
+Band 1: VV
+  dtype:        float32
+  nodata:       -32768.0
+  valid pixels: 427678924
+  zero frac:    0.000000
+  nan frac:     0.000000
+  min/p01/p50:  0.0005376707413233817 / 0.007643167860805988 / 0.12940935790538788
+  p99/max:      0.6786692923307385 / 2845.244140625
 
+Band 2: VH
+  dtype:        float32
+  nodata:       -32768.0
+  valid pixels: 427678924
+  zero frac:    0.000000
+  nan frac:     0.000000
+  min/p01/p50:  0.00016876240260899067 / 0.0028076726547442378 / 0.02671200782060623
+  p99/max:      0.11597216874361038 / 143.54690551757812
 
+======================== Sen1Floods11 ========================
+Path:         data/4final/sen1floods11/S1Hand/Bolivia_60373_S1Hand.tif
+Band count:   2
+Descriptions: ('VV', 'VH')
+CRS:          EPSG:4326
+Size:         512 x 512
+Resolution:   (8.983152841195215e-05, 8.983152841195215e-05)
+Transform:    (8.983152841195215e-05, 0.0, -65.0811457038911, 0.0, -8.983152841195215e-05, -13.522160308794334, 0.0, 0.0, 1.0)
+Nodata:       nan
+Tags:         {'AREA_OR_POINT': 'Area', 'OVR_RESAMPLING_ALG': 'NEAREST'}
 
+Band 1: VV
+  dtype:        float32
+  nodata:       nan
+  valid pixels: 221330
+  zero frac:    0.000000
+  nan frac:     0.155693
+  min/p01/p50:  -35.225833892822266 / -21.303873596191405 / -8.971013069152832
+  p99/max:      -3.903452713489536 / -0.14513804018497467
 
+Band 2: VH
+  dtype:        float32
+  nodata:       nan
+  valid pixels: 221330
+  zero frac:    0.000000
+  nan frac:     0.155693
+  min/p01/p50:  -47.97657775878906 / -26.714249420166016 / -14.441850185394287
+  p99/max:      -9.588386087417604 / -6.573159694671631
 
+====================== Compatibility Summary ======================
+band_count   MATCH | left=2 | right=2
+crs           DIFF | left=EPSG:32645 | right=EPSG:4326
+resolution    DIFF | left=(10.0, 10.0) | right=(8.983152841195215e-05, 8.983152841195215e-05)
+descriptions MATCH | left=('VV', 'VH') | right=('VV', 'VH')
+nodata        DIFF | left=-32768.0 | right=nan
 
+Band 1 comparison
+  names:          VV | VV
+  dtype:          float32 | float32
+  nodata:         -32768.0 | nan
+  zero frac:      0.000000 | 0.000000
+  nan frac:       0.000000 | 0.155693
+  min/p50/max:    0.0005376707413233817 / 0.12940935790538788 / 2845.244140625
+                   -35.225833892822266 / -8.971013069152832 / -0.14513804018497467
 
-## CSV Format
-
-### Training/Testing
-```csv
-tile_001.tif,mask_001.tif
-tile_002.tif,mask_002.tif
-```
-
-### Inference
-```csv
-tile_001.tif
-tile_002.tif
-```
-
-**No headers required.** Column order is fixed: image first, mask second (if applicable).
+Band 2 comparison
+  names:          VH | VH
+  dtype:          float32 | float32
+  nodata:         -32768.0 | nan
+  zero frac:      0.000000 | 0.000000
+  nan frac:       0.000000 | 0.155693
+  min/p50/max:    0.00016876240260899067 / 0.02671200782060623 / 143.54690551757812
+                   -47.97657775878906 / -14.441850185394287 / -6.573159694671631

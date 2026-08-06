@@ -5,6 +5,8 @@ import logging
 import numpy as np
 import rasterio
 
+from scripts.process.process_helpers import detect_input_is_linear_multiband
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -147,6 +149,17 @@ def main():
     print("++++++++++TIFF COMPARISON+++++++++++++")
     pc_path = find_pc_image()
     train_path = Path("data/4final/sen1floods11/S1Hand/Bolivia_60373_S1Hand.tif")
+
+    if pc_path.exists():
+        is_linear, stats = detect_input_is_linear_multiband(pc_path, return_stats=True)
+        scale = "linear" if is_linear else "dB"
+        print(f"\nShared scale check (pipeline helper): {scale}")
+        print(
+            "  stats: "
+            f"min={stats.get('min')}, max={stats.get('max')}, "
+            f"p1={stats.get('p1')}, p50={stats.get('p50')}, p99={stats.get('p99')}, "
+            f"frac_lt_zero={stats.get('frac_lt_zero')}, ambiguous={stats.get('ambiguous')}"
+        )
 
     left = raster_summary(pc_path)
     right = raster_summary(train_path)
