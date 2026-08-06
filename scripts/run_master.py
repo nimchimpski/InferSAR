@@ -222,7 +222,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     # output_filename = '_argh'
     # sensor = 'S1'
     # date= '030126'
-    threshold = 0.5 # THRESHOLD FOR METRICS + STITCHING. used in train class and inference stitching
+    threshold = 0.2 # THRESHOLD FOR METRICS + STITCHING. used in train class and inference stitching
     # ........................................................
     if DUAL_BAND_INPUT:
         print("="*40 +f'\nDUAL BAND INPUT = {DUAL_BAND_INPUT}, NOT CHECKED')
@@ -719,6 +719,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         # LOAD THE MODEL STATE DICT
         try:
             model.load_state_dict(cleaned_state_dict)
+            model.eval()
             print(f"\nCHECKPOINT:  {ckpt_path.name}\n")
         except Exception as e:
             logger.error(f"Failed to load model state dict: {e}")
@@ -851,9 +852,9 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
                 imgs   = imgs.to(device)            # [B,2,H,W]
                 logits = model(imgs)
                 probs  = torch.sigmoid(logits).cpu()  # back to CPU for numpy/rasterio
-                preds  = (probs > threshold).float()  # [B,1,H,W]
+                # preds  = (probs > threshold).float()  # [B,1,H,W]
                 for b, name in enumerate(fnames):
-                    out = preds[b, 0].numpy()                 # 2-D
+                    out = probs[b, 0].numpy()                 # 2-D
                     out[~valids[b, 0].numpy().astype(bool)] = 0  # mask invalid px
 
                     src_path = image_tiles_path / name
