@@ -1,0 +1,2 @@
+
+TEST: input is the the pretiled folder already prepared in S1F11 dataset

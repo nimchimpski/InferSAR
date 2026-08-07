@@ -938,21 +938,25 @@ class Segmentation_training_loop(pl.LightningModule):
         # logger.debug(f'---metric threshod={mthresh}')
         if valid.sum() == 0:
         # skip batch that contains only ignore pixels
-            return torch.tensor(0.), torch.tensor(0.), torch.tensor(0.), torch.tensor(0.)
-        
-        # Convert valid to boolean for indexing
+            zero = logits.new_tensor(0.0)
+            return zero, zero, zero, zero
+
+        # Keep the segmentation tensor shape and exclude ignore pixels with masked counts.
         valid_bool = valid.bool()
-        preds = preds[valid_bool].unsqueeze(1)  # Apply the mask to predictions
-        masks = masks[valid_bool].long().unsqueeze(1)  # Apply the mask to ground truth
+        preds_bool = preds.bool()
+        masks_bool = masks.bool()
 
-        # Compute metrics
-        tp, fp, fn, tn = smp.metrics.get_stats(preds, masks.long(), mode='binary')
-        iou = smp.metrics.iou_score(tp, fp, fn, tn)
-        precision = smp.metrics.precision(tp, fp, fn, tn)
-        recall = smp.metrics.recall(tp, fp, fn, tn)
-        f1 = smp.metrics.f1_score(tp, fp, fn, tn)
+        tp = ((preds_bool == 1) & (masks_bool == 1) & valid_bool).sum(dim=(1, 2, 3)).float()
+        fp = ((preds_bool == 1) & (masks_bool == 0) & valid_bool).sum(dim=(1, 2, 3)).float()
+        fn = ((preds_bool == 0) & (masks_bool == 1) & valid_bool).sum(dim=(1, 2, 3)).float()
+        tn = ((preds_bool == 0) & (masks_bool == 0) & valid_bool).sum(dim=(1, 2, 3)).float()
 
-        # Averages
+        eps = logits.new_tensor(1e-8)
+        iou = tp / (tp + fp + fn + eps)
+        precision = tp / (tp + fp + eps)
+        recall = tp / (tp + fn + eps)
+        f1 = 2 * tp / (2 * tp + fp + fn + eps)
+
         ioumean = iou.mean()
         precisionmean = precision.mean()
         recallmean = recall.mean()

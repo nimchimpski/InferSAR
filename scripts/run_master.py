@@ -190,11 +190,11 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
 
     # Training parameters
     dataset_name = "sen1floods11"  # "sen1floods11" or "copernicus_floods"
-    run_name = "_260105_2306_"
+    run_name = "find-best-ckpt" #//////////
     TRAINING_DATA_PRETILED = True
     subset_fraction = 1
     batch_size = 8 # 8 is tested as optimal for the macbook
-    max_epoch = 15
+    max_epoch = 20
     early_stop = True
     patience = 3
     num_workers = 0 
@@ -213,8 +213,8 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     # Data processing parameters
     # db_min = None
     # db_max = None
-    tile_size = 512 
-    stride = 512
+    tile_size = 256
+    stride = 256
     
     # Initialize variables
     stitched_img_path = None  # Will be set later based on mode
@@ -223,7 +223,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     # sensor = 'S1'
     # date= '030126'
     # ***********************
-    threshold = 0.4 # THRESHOLD FOR METRICS + STITCHING.
+    threshold = 0.5 # THRESHOLD FOR METRICS + STITCHING.
     # **********************
     # ........................................................
     if DUAL_BAND_INPUT:
@@ -235,8 +235,8 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         print("."*40)
     
     MAKE_TIFS = None # INFERENCE NEEDS THIS
-    MAKE_DATAARRAY = None # INFERENCE DOES NOT NEED THIS
-    MAKE_TILES = None # INFERENCE NEEDS THIS
+    MAKE_DATAARRAY = False # INFERENCE DOES NOT NEED THIS
+    MAKE_TILES = False # INFERENCE MAY NEED THIS
     if TRAINING_DATA_PRETILED:
         logger.info(" USING PRE-TILED TRAINING DATASET ")
         MAKE_TIFS = False
@@ -610,12 +610,16 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     # EXISTING CKPTSONLY NEEDED FOR FINETUNING
     if ckpt_input:
         ckpt_path = next(paths.ckpt_input_path.rglob("*.ckpt"), None)
+        wandb.config["checkpoint"] = ckpt_path.name 
     else:
         # get latest checkpoint in training folder
         ckpt_path = max(paths.ckpt_training_path.rglob("*.ckpt"), key=os.path.getctime, default=None)
     if ckpt_path is None:
         logger.error(f"*No checkpoint found in: {paths.ckpt_input_path}")
         return
+
+    
+    
     if train:
         # Training dataset
         # normalisation handled in dataset class
@@ -674,7 +678,9 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
             labels_path=paths.labels_path,
             csv_path=paths.test_csv,
             image_code=paths.image_code,
-            input_is_linear=input_is_linear,
+            input_is_linear=False,
+            db_min=db_min,
+            db_max=db_max,
             vv_mean = vv_mean,
             vv_std = vv_std,   
             vh_mean = vh_mean,
