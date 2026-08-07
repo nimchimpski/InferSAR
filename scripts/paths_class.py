@@ -96,7 +96,7 @@ class ProjectPaths:
             'metadata_path': self.dataset_path / 'tile_metadata_pth.json'
         }
     
-    def validate_paths(self, job_type: str, ckpt_input: bool = False):
+    def validate_paths(self, job_type: str, require_checkpoint: bool = False):
         """Validate that required paths exist for the given job type"""
         errors = []
         required_paths = []
@@ -119,22 +119,16 @@ class ProjectPaths:
             # Inference paths are created dynamically, less validation needed
             pass
             
-        # Always check checkpoint folder, but pick which one based on flag/job
-        if job_type ==  ckpt_input:
-            ckpt_dir = self.ckpt_input_path
-            ckpt_desc = "Checkpoint input directory"
-        else:
-            ckpt_dir = self.ckpt_training_path
-            ckpt_desc = "Checkpoint training directory"
-
-        required_paths.append((ckpt_dir, ckpt_desc))
+        ckpt_dir = self.ckpt_input_path
+        if require_checkpoint:
+            required_paths.append((ckpt_dir, "Checkpoint input directory"))
         
         for path, description in required_paths:
             if not path.exists():
                 errors.append(f"{description} not found: {path}")
         
-        # Check for checkpoint files
-        if not any(ckpt_dir.rglob("*.ckpt")):
+        # Check for checkpoint files only when required for this run mode.
+        if require_checkpoint and not any(ckpt_dir.rglob("*.ckpt")):
             errors.append(f"No checkpoint files found in: {ckpt_dir}")
             
         return errors

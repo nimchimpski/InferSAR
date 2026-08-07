@@ -10,7 +10,6 @@ Usage:
     python run_master.py --inference # Run inference
     python run_master.py --config   # Use config file
     python run_master.py --fine_tune # Fine-tune from training checkpoint
-    python run_master.py --ckpt_input # Specify checkpoint input folder
 
 If training on multiple regions - consider enabling 'dynamic weighting' to deal with batch differences - and then disable the weighting here:-
  smp_bce =  smp.losses.SoftBCEWithLogitsLoss(ignore_index=255, reduction='mean',pos_weight=torch.tensor([8.0]))
@@ -133,11 +132,10 @@ signal.signal(signal.SIGINT, handle_interrupt)
 @click.option('--inference', is_flag=True, help="Run inference on a copernicus S1 image")
 @click.option('--config', is_flag=True, help='loading from config')
 @click.option('--fine_tune', is_flag=True, default=False, help="fine tune from training ckpt")
-@click.option('--ckpt_input', is_flag=True, default=False, help="ckpt path is 'training folder or input folder'")
 
 # //////////////////   MAIN   ///////////////////////
 
-def main(train, test, inference, config, fine_tune, ckpt_input):
+def main(train, test, inference, config, fine_tune):
     print("\n" + "/"*40 + "\nRUNNING INFERSAR")
     n = 0
     for i in train, test, inference:
@@ -147,7 +145,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         print("==========\nYOU MUST  SPECIFY ONE OF --TRAIN, --TEST OR --INFERENCE.\n==========")
         return
     # print click options
-    print(f'\nwith flags:\n--train: {train}\n--test: {test}\n--inference: {inference}\n--config: {config}\n--fine_tune: {fine_tune}\n--ckpt_input: {ckpt_input}')    
+    print(f'\nwith flags:\n--train: {train}\n--test: {test}\n--inference: {inference}\n--config: {config}\n--fine_tune: {fine_tune}')    
 
     if  test:
         job_type =  "test"
@@ -178,8 +176,9 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     logger.debug(f"Project directory: {project_path}")
     
     paths = ProjectPaths(project_path=project_path)
+    require_checkpoint = test or inference or fine_tune
     # Validate paths for the current job type
-    path_errors = paths.validate_paths(job_type)
+    path_errors = paths.validate_paths(job_type, require_checkpoint=require_checkpoint)
     if path_errors:
         for error in path_errors:
             logger.error(error)
@@ -189,8 +188,8 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     DUAL_BAND_INPUT = False
 
     # Training parameters
-    dataset_name = "sen1floods11"  # "sen1floods11" or "copernicus_floods"
-    run_name = "find-best-ckpt" #//////////
+    dataset_name = "S1F11"  # "sen1floods11" or "copernicus_floods"
+    # run_name = "find-best-ckpt" #//////////
     TRAINING_DATA_PRETILED = True
     subset_fraction = 1
     batch_size = 8 # 8 is tested as optimal for the macbook
@@ -223,7 +222,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     # sensor = 'S1'
     # date= '030126'
     # ***********************
-    threshold = 0.5 # THRESHOLD FOR METRICS + STITCHING.
+    threshold = 0.2 # THRESHOLD FOR METRICS + STITCHING.
     # **********************
     # ........................................................
     if DUAL_BAND_INPUT:
@@ -233,6 +232,27 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     print("="*40 +f'\nWandB ONLINE = {WandB_online}')
     if WandB_online:
         print("."*40)
+
+    ckpt_path = None
+    ckpt_source = "none"
+    ckpt_tag = "none"
+    if require_checkpoint:
+        # Resolve checkpoint from ckpt_input only for deterministic runs.
+        input_ckpts = sorted(paths.ckpt_input_path.rglob("*.ckpt"))
+        if len(input_ckpts) != 1:
+            logger.error(
+                f"Expected exactly 1 checkpoint in {paths.ckpt_input_path}, found {len(input_ckpts)}"
+            )
+            return
+        ckpt_path = input_ckpts[0]
+        ckpt_source = "ckpt_input"
+
+        ckpt_parts = ckpt_path.stem.split("_")
+        if len(ckpt_parts) >= 3:
+            # Keep only the compact checkpoint date/time token (drop batch/loss tokens).
+            ckpt_tag = f"{ckpt_parts[1][2:]}_{ckpt_parts[2]}"
+        else:
+            ckpt_tag = ckpt_path.stem[:12]
     
     MAKE_TIFS = None # INFERENCE NEEDS THIS
     MAKE_DATAARRAY = False # INFERENCE DOES NOT NEED THIS
@@ -251,6 +271,13 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         subset_fraction = 1
         batch_size = 1
         shuffle = False
+
+    run_name = (
+        f"{job_type}_{dataset_name}_{timestamp}_ckpt-{ckpt_tag}_"
+        f"BS{batch_size}_s{subset_fraction}_{loss_description}"
+    )
+
+    if inference:
         # DEFINE INFERENCE PATHS
         inference_paths = paths.get_inference_paths(
             tile_size=tile_size, 
@@ -306,6 +333,8 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     project = "mac_py_package"
     wandb_config = {
         "name": run_name,
+        "checkpoint_name": ckpt_path.name if ckpt_path is not None else None,
+        "checkpoint_source": ckpt_source,
         "dataset_name": dataset_name,
         "subset_fraction": subset_fraction,
         "batch_size":batch_size,
@@ -323,13 +352,6 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
     if loss_description == "focal":
         logger.debug(f"focal_alpha: {wandb.config.get('focal_alpha', 'Not Found')}")
         logger.debug(f"focal_gamma: {wandb.config.get('focal_gamma', 'Not Found')}")
-        loss_desc = f"{loss_description}_{config.focal_alpha}_{config.focal_gamma}" 
-    elif loss_description == "bce_dice":
-        loss_desc = f"{loss_description}_{config.bce_weight}"
-    else:
-        loss_desc = loss_description
-
-    run_name = f"{job_type}_{dataset_name}_{timestamp}_BS{config.batch_size}_s{config.subset_fraction}_{loss_desc}"  
     wandb.run.name = run_name
 
     # wandb.run.save()
@@ -607,16 +629,7 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
 
     #........................................................
     # CREATE DATALOADERS BASED ON JOB TYPE
-    # EXISTING CKPTSONLY NEEDED FOR FINETUNING
-    if ckpt_input:
-        ckpt_path = next(paths.ckpt_input_path.rglob("*.ckpt"), None)
-        wandb.config["checkpoint"] = ckpt_path.name 
-    else:
-        # get latest checkpoint in training folder
-        ckpt_path = max(paths.ckpt_training_path.rglob("*.ckpt"), key=os.path.getctime, default=None)
-    if ckpt_path is None:
-        logger.error(f"*No checkpoint found in: {paths.ckpt_input_path}")
-        return
+
 
     
     
@@ -716,7 +729,10 @@ def main(train, test, inference, config, fine_tune, ckpt_input):
         
         dataloader = DataLoader(inference_subset, batch_size=batch_size, num_workers=num_workers, persistent_workers=persistent_workers, shuffle=False)
     
-    print(f'='*40 + f'\nCKPT NAME: {ckpt_path.name}\n' + '='*40)
+    if ckpt_path is not None:
+        print(f'='*40 + f'\nCKPT NAME: {ckpt_path.name}\n' + '='*40)
+    else:
+        print(f'='*40 + '\nCKPT NAME: None (training from scratch)\n' + '='*40)
 
     if test or inference:
         try:
