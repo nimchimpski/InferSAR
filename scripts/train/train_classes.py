@@ -12,7 +12,7 @@ import segmentation_models_pytorch as smp
 import pytorch_lightning as pl
 import csv
 import logging
-from typing import Optional, Tuple, Union, List
+from typing import Optional, Tuple, Union, List, Dict
 
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.callbacks import ModelCheckpoint,EarlyStopping
@@ -37,7 +37,7 @@ import io
 import random
 import logging
 from scripts.train.train_helpers import is_sweep_run
-from scripts.train.train_functions import plot_auc_pr 
+from scripts.train.train_functions import plot_auc_pr, compute_confusion_counts, metrics_from_counts
 
 
 logger = logging.getLogger(__name__)
@@ -50,6 +50,91 @@ def one_hot(tensor: torch.Tensor, num_classes: int) -> torch.Tensor:
 def simplex(tensor: torch.Tensor, axis: int = 1) -> bool:
     """Check if tensor represents a probability distribution (sums to 1)"""
     return torch.allclose(torch.sum(tensor, dim=axis), torch.ones_like(torch.sum(tensor, dim=axis)))
+
+
+def _to_db_if_needed(arr: np.ndarray, input_is_linear: bool) -> np.ndarray:
+    """Return a dB-space view of arr, converting only when input is linear."""
+    arr_db = arr.copy()
+    if input_is_linear:
+        np.clip(arr_db, 1e-6, None, out=arr_db)
+        np.log10(arr_db, out=arr_db)
+        arr_db *= 10.0
+    return arr_db
+
+
+def compute_clip_stats(arr_db: np.ndarray, db_min: float, db_max: float) -> Dict[str, float]:
+    """Compute clipping counts/rates before clipping for one dB-space band array."""
+    finite = arr_db[np.isfinite(arr_db)]
+    valid_count = int(finite.size)
+    if valid_count == 0:
+        return {
+            "valid_count": 0,
+            "low_count": 0,
+            "high_count": 0,
+            "low_rate": 0.0,
+            "high_rate": 0.0,
+        }
+
+    low_count = int(np.sum(finite < db_min))
+    high_count = int(np.sum(finite > db_max))
+    return {
+        "valid_count": valid_count,
+        "low_count": low_count,
+        "high_count": high_count,
+        "low_rate": low_count / valid_count,
+        "high_rate": high_count / valid_count,
+    }
+
+
+def summarize_clip_diagnostics(
+    img_paths: List[Path],
+    input_is_linear: bool,
+    db_min: float,
+    db_max: float,
+    sample_count: int = 20,
+    seed: int = 42,
+) -> Dict[str, Dict[str, float]]:
+    """Summarize low/high clip rates for VV and VH bands over sampled tiles."""
+    if not img_paths:
+        return {}
+
+    rng = random.Random(seed)
+    sample_n = min(sample_count, len(img_paths))
+    sampled_paths = rng.sample(img_paths, sample_n)
+
+    totals = {
+        "vv": {"valid_count": 0, "low_count": 0, "high_count": 0},
+        "vh": {"valid_count": 0, "low_count": 0, "high_count": 0},
+    }
+
+    for img_path in sampled_paths:
+        with rasterio.open(img_path) as src:
+            valid_np = src.dataset_mask().astype(bool)
+            vv_arr = src.read(1).astype(np.float32)
+            vh_arr = src.read(2).astype(np.float32)
+
+        for band_name, arr in (("vv", vv_arr), ("vh", vh_arr)):
+            arr[~valid_np] = np.nan
+            arr_db = _to_db_if_needed(arr, input_is_linear=input_is_linear)
+            stats = compute_clip_stats(arr_db, db_min=db_min, db_max=db_max)
+            totals[band_name]["valid_count"] += int(stats["valid_count"])
+            totals[band_name]["low_count"] += int(stats["low_count"])
+            totals[band_name]["high_count"] += int(stats["high_count"])
+
+    summary: Dict[str, Dict[str, float]] = {}
+    for band_name, t in totals.items():
+        valid_count = int(t["valid_count"])
+        low_count = int(t["low_count"])
+        high_count = int(t["high_count"])
+        summary[band_name] = {
+            "sample_tiles": sample_n,
+            "valid_count": valid_count,
+            "low_count": low_count,
+            "high_count": high_count,
+            "low_rate": (low_count / valid_count) if valid_count else 0.0,
+            "high_rate": (high_count / valid_count) if valid_count else 0.0,
+        }
+    return summary
 
 
 class FloodDataset_from_multiband(Dataset):
@@ -313,6 +398,38 @@ class Sen1Dataset(Dataset):
         # For inference mode, scan all tiles to compute true dB min/max (pre-normalization)
         # if job_type == "inference":
         #     self._compute_inference_db_stats()
+
+        if job_type in ("test", "inference"):
+            self._log_clip_diagnostics()
+
+
+    def _log_clip_diagnostics(self, sample_count: int = 20) -> None:
+        """Log one-time clipping diagnostics for test/inference domain samples."""
+        try:
+            summary = summarize_clip_diagnostics(
+                img_paths=self.img_paths,
+                input_is_linear=self.input_is_linear,
+                db_min=self.db_min,
+                db_max=self.db_max,
+                sample_count=sample_count,
+            )
+        except Exception as exc:
+            logger.warning(f"Clip diagnostics failed for {self.job_type}: {exc}")
+            return
+
+        if not summary:
+            logger.warning(f"No clip diagnostics available for {self.job_type} (no image paths).")
+            return
+
+        for band_name in ("vv", "vh"):
+            band_stats = summary.get(band_name, {})
+            if not band_stats:
+                continue
+            logger.info(
+                f"{self.job_type.upper()} clip stats [{band_name.upper()}] over {band_stats['sample_tiles']} tiles: "
+                f"low_clip={band_stats['low_rate']:.4f} ({band_stats['low_count']}/{band_stats['valid_count']}), "
+                f"high_clip={band_stats['high_rate']:.4f} ({band_stats['high_count']}/{band_stats['valid_count']})"
+            )
         
 
     # USE FOR DEBUGGING
@@ -435,16 +552,24 @@ class Sen1Dataset(Dataset):
 
             # MEAN/STANDARD  NORMALISATION
             if i == 0:  # VV
+                if self.vv_std <= 0:
+                    raise ValueError(f"Invalid vv_std for normalization: {self.vv_std}")
                 arr -= self.vv_mean  # e.g. ~-12 for VV, ~-20 for VH
                 arr /= self.vv_std   # e.g. ~6-8 for both
             else:       # VH
+                if self.vh_std <= 0:
+                    raise ValueError(f"Invalid vh_std for normalization: {self.vh_std}")
 
                 arr -= self.vh_mean  # e.g. ~-12 for VV, ~-20 for VH
                 arr /= self.vh_std   # e.g. ~6-8 for both
 
-        # Safety: replace any residual NaN/Inf with finite values to avoid breaking loaders
-        np.nan_to_num(vv_arr, nan=self.db_min, posinf=self.db_max, neginf=self.db_min, copy=False)
-        np.nan_to_num(vh_arr, nan=self.db_min, posinf=self.db_max, neginf=self.db_min, copy=False)
+        # Safety: replace any residual NaN/Inf with finite values on the normalized scale.
+        vv_low_norm = (self.db_min - self.vv_mean) / self.vv_std
+        vv_high_norm = (self.db_max - self.vv_mean) / self.vv_std
+        vh_low_norm = (self.db_min - self.vh_mean) / self.vh_std
+        vh_high_norm = (self.db_max - self.vh_mean) / self.vh_std
+        np.nan_to_num(vv_arr, nan=vv_low_norm, posinf=vv_high_norm, neginf=vv_low_norm, copy=False)
+        np.nan_to_num(vh_arr, nan=vh_low_norm, posinf=vh_high_norm, neginf=vh_low_norm, copy=False)
 
         # stack & convert to tensor
         img_tensor = torch.from_numpy(np.stack([vv_arr, vh_arr], axis=0))
@@ -501,6 +626,9 @@ class Segmentation_training_loop(pl.LightningModule):
         self.dynamic_weights = False
         self.loss_description = loss_description
         self.test_images = []
+        # Pooled (epoch-wide) confusion counts; single source of truth for iou/precision/recall/f1.
+        self._val_counts = {"tp": 0.0, "fp": 0.0, "fn": 0.0, "tn": 0.0}
+        self._test_counts = {"tp": 0.0, "fp": 0.0, "fn": 0.0, "tn": 0.0}
 
     def forward(self, x):
         # logger.info(f"---Input device in forward: {x.device}")
@@ -567,7 +695,7 @@ class Segmentation_training_loop(pl.LightningModule):
             logger.debug(f"---Logits Stats - Mean: {logits.mean()}, Std: {logits.std()}, Min: {logits.min()}, Max: {logits.max()}")
             raise ValueError(f"Logits contain NaN or Inf at batch {batch_idx}")
         
-        self.validation_outputs.append({'logits': logits, 'masks': masks})  # Store outputs
+        self.validation_outputs.append({'logits': logits, 'masks': masks, 'valid': valids})  # Store outputs
         loss_per_pixel = self.loss_fn(logits, masks)
         loss_per_pixel = (loss_per_pixel * valids).sum() / valids.sum()  # Apply valid mask to loss
 
@@ -621,7 +749,7 @@ class Segmentation_training_loop(pl.LightningModule):
             logger.debug(f"---Logits Stats - Mean: {logits.mean()}, Std: {logits.std()}, Min: {logits.min()}, Max: {logits.max()}")
             raise ValueError(f"Logits contain NaN or Inf at batch {batch_idx}")
 
-        self.test_outputs.append({'logits': logits, 'masks': masks})  # Store outputs
+        self.test_outputs.append({'logits': logits, 'masks': masks, 'valid': valids})  # Store outputs
         loss_per_pixel = self.loss_fn(logits, masks)
         loss_per_pixel = (loss_per_pixel * valids).sum() / valids.sum()  # Apply valid mask to loss
 
@@ -787,95 +915,184 @@ class Segmentation_training_loop(pl.LightningModule):
 
     def on_validation_epoch_start(self):
         self.validation_outputs = []  # Reset the list for the new epoch
+        self._val_counts = {"tp": 0.0, "fp": 0.0, "fn": 0.0, "tn": 0.0}
 
     def on_validation_epoch_end(self):
         """
-        Compute AUC-PR only during the final validation epoch. takes the 
+        Log pooled (epoch-wide) validation metrics every epoch, and heavier PR
+        diagnostics on a throttled schedule for low-compute environments.
         """
+        # Pooled confusion counts are the single source of truth for iou/precision/recall/f1.
+        pooled = metrics_from_counts(
+            torch.tensor(self._val_counts["tp"]),
+            torch.tensor(self._val_counts["fp"]),
+            torch.tensor(self._val_counts["fn"]),
+            torch.tensor(self._val_counts["tn"]),
+        )
+        self.log('iou_val', pooled["iou"], prog_bar=True, logger=True)
+        self.log('precision_val', pooled["precision"], prog_bar=True, logger=True)
+        self.log('recall_val', pooled["recall"], prog_bar=True, logger=True)
+        self.log('f1_val', pooled["f1"], prog_bar=True, logger=True)
+        self.log('thresh_val', self.metric_threshold, logger=True)
+
+        # Low-compute defaults: throttle expensive PR diagnostics and uploads.
+        pr_every_n_epochs = 10
+        pr_recall_floor = 0.60
+        pr_max_pixels = 150000
+        pr_max_points = 256
+        threshold_step = 0.01
+
+        is_final_epoch = self.current_epoch == self.trainer.max_epochs - 1
+        should_run_pr = is_final_epoch or (self.current_epoch % pr_every_n_epochs == 0)
         # if is_sweep_run():
         #     logger.debug(f'---in sweep mode so skipping auc-pr calculation')
         #     return
+        if not self.validation_outputs:
+            logger.warning("---Validation outputs are empty at epoch end; skipping PR diagnostics.")
+            return
 
-        # Check if this is the final epoch
-        if self.current_epoch == self.trainer.max_epochs - 1:
-            logger.debug(f"---Calculating AUC-PR for the final validation epoch: {self.current_epoch}")
+        if not should_run_pr:
+            logger.debug(
+                f"---Skipping PR diagnostics at epoch {self.current_epoch}; "
+                f"running every {pr_every_n_epochs} epochs."
+            )
+            self.validation_outputs = []
+            return
 
-            # Ensure validation_outputs has been populated
-            if not self.validation_outputs:
-                raise ValueError("---Validation outputs are empty. Check your validation_step implementation.")
-
+        try:
             # Aggregate outputs from all validation batches
             all_logits = torch.cat([output['logits'] for output in self.validation_outputs], dim=0)
             all_labels = torch.cat([output['masks'] for output in self.validation_outputs], dim=0)
+            all_valid = torch.cat([output['valid'] for output in self.validation_outputs], dim=0)
 
             if all_logits.numel() == 0 or all_labels.numel() == 0:
                 raise ValueError("Validation outputs are empty. Ensure validation_step is properly implemented.")
 
-            # Flatten logits and labels
-            # logits_np = all_logits.detach().cpu().numpy().flatten()
             logits_np = torch.sigmoid(all_logits).detach().cpu().numpy().flatten()
             labels_np = all_labels.detach().cpu().numpy().flatten()
+            valid_np = all_valid.detach().cpu().numpy().flatten().astype(bool)
 
-            # GET RID OF THE 255 INVALID PIXELS AND FILTER BOTH ARRAYS
-            valid_mask = labels_np != 255
-            if valid_mask.sum() == 0:
-                raise ValueError("Validation batch contains only ignore pixels.")
-            
-            # Apply mask to both logits and labels to keep only valid pixels
-            logits_np = logits_np[valid_mask]
-            labels_np = labels_np[valid_mask]
+            # Use the same valid-pixel mask as the pooled fixed-threshold metrics above.
+            if valid_np.sum() == 0:
+                raise ValueError("Validation batch contains only invalid pixels.")
 
-            # DEBUGGING
-            # Check for NaN or Inf values in logits_np and labels_np
+            logits_np = logits_np[valid_np]
+            labels_np = labels_np[valid_np]
+
+            # For low-power devices, cap PR analysis sample size.
+            if logits_np.size > pr_max_pixels:
+                rng = np.random.default_rng(42 + int(self.current_epoch))
+                idx = rng.choice(logits_np.size, size=pr_max_pixels, replace=False)
+                logits_np = logits_np[idx]
+                labels_np = labels_np[idx]
+                logger.info(
+                    f"Validation PR diagnostics sampled {pr_max_pixels} pixels "
+                    f"from {valid_np.sum()} valid pixels for speed."
+                )
+
             if not np.isfinite(logits_np).all():
                 raise ValueError("---logits_np contains NaN or Inf values.")
             if not np.isfinite(labels_np).all():
                 raise ValueError("---labels_np contains NaN or Inf values.")
-            # logger.debug(f"---Logits: Min={logits_np.min()}, Max={logits_np.max()}, Mean={logits_np.mean()}")
-            # logger.debug(f"---Labels: Unique={np.unique(labels_np)}, Counts={np.bincount(labels_np.astype(int))}")
 
-            # COUNT UNIQUE CLASSES
             unique_classes, class_counts = np.unique(labels_np, return_counts=True)
-            logger.debug(f"---Validation AUC-PR calculation:")
+            logger.debug(f"---Validation AUC-PR calculation (epoch {self.current_epoch}):")
             logger.debug(f"---Total validation pixels: {len(labels_np)}")
             logger.debug(f"---Unique classes: {unique_classes}")
             logger.debug(f"---Class counts: {class_counts}")
             logger.debug(f"---Class distribution: {dict(zip(unique_classes, class_counts))}")
-            
-            # Skip AUC-PR calculation if there's only one class
+
             if len(unique_classes) < 2:
                 logger.warning("---Skipping AUC-PR calculation: only one class present in validation data")
                 logger.warning("---This may indicate:")
                 logger.warning("---  1. Validation subset is too small")
                 logger.warning("---  2. Dataset is heavily imbalanced")
                 logger.warning("---  3. Wrong subset_fraction setting")
-                auc_pr = 0.0  # Default value when AUC-PR cannot be calculated
+                auc_pr = 0.0
                 self.log('val_auc_pr', auc_pr, prog_bar=True, logger=True, batch_size=len(all_logits))
                 return
-            
+
             try:
                 precision, recall, thresholds = precision_recall_curve(labels_np, logits_np)
-                f1_scores = 2 * (precision * recall) / (precision + recall + 1e-8)  # Avoid division by zero
-                best_index = f1_scores.argmax()
-                best_threshold = thresholds[best_index]
-                logger.debug(f"---Best Threshold: {best_threshold}, F1-Score: {f1_scores[best_index]}")
-                aucpr_plot = plot_auc_pr(recall, precision, thresholds, best_index, best_threshold)
-                # aucpr_plot.show()
-                self.logger.experiment.log({"Precision-Recall Curve": wandb.Image(aucpr_plot)})
+                precision_t = precision[:-1]
+                recall_t = recall[:-1]
+                f1_scores = 2 * (precision_t * recall_t) / (precision_t + recall_t + 1e-8)
+
+                if thresholds.size == 0:
+                    raise ValueError("No PR thresholds produced; cannot select operating threshold.")
+
+                eligible_idx = np.where(recall_t >= pr_recall_floor)[0]
+                if eligible_idx.size > 0:
+                    best_index = int(eligible_idx[np.argmax(precision_t[eligible_idx])])
+                    threshold_policy = "precision_max_recall_floor"
+                else:
+                    best_index = int(np.argmax(f1_scores))
+                    threshold_policy = "max_f1_fallback"
+
+                best_threshold = float(thresholds[best_index])
+                operating_threshold = float(np.clip(np.round(best_threshold / threshold_step) * threshold_step, 0.0, 1.0))
+                best_precision = float(precision_t[best_index])
+                best_recall = float(recall_t[best_index])
+                best_f1 = float(f1_scores[best_index])
+                logger.info(
+                    "Validation threshold selection: "
+                    f"policy={threshold_policy}, threshold_raw={best_threshold:.4f}, "
+                    f"threshold_operating={operating_threshold:.2f}, "
+                    f"precision={best_precision:.4f}, recall={best_recall:.4f}, f1={best_f1:.4f}"
+                )
+
+                if thresholds.size > pr_max_points:
+                    keep_idx = np.linspace(0, thresholds.size - 1, num=pr_max_points, dtype=int)
+                    thresholds_plot = thresholds[keep_idx]
+                    precision_plot = precision_t[keep_idx]
+                    recall_plot = recall_t[keep_idx]
+                    f1_plot = f1_scores[keep_idx]
+                else:
+                    thresholds_plot = thresholds
+                    precision_plot = precision_t
+                    recall_plot = recall_t
+                    f1_plot = f1_scores
+
+                pr_table = wandb.Table(columns=["threshold", "precision", "recall", "f1"])
+                for thr, p, r, f1 in zip(
+                    thresholds_plot.tolist(),
+                    precision_plot.tolist(),
+                    recall_plot.tolist(),
+                    f1_plot.tolist(),
+                ):
+                    pr_table.add_data(float(thr), float(p), float(r), float(f1))
+
+                log_payload = {
+                    "val_pr_table": pr_table,
+                    "val_best_threshold": operating_threshold,
+                    "val_best_threshold_raw": best_threshold,
+                    "val_best_precision": best_precision,
+                    "val_best_recall": best_recall,
+                    "val_best_f1": best_f1,
+                    "val_threshold_policy": threshold_policy,
+                    "val_recall_floor": pr_recall_floor,
+                    "val_threshold_step": threshold_step,
+                    "val_epoch": int(self.current_epoch),
+                }
+                self.logger.experiment.log(log_payload)
                 auc_pr = auc(recall, precision)
 
-            except ValueError as e:
-                logger.debug(f"---AUC-PR calculation failed: {e}")
-                auc_pr = 0.0  # Default value for invalid AUC-PR
+                self.log('val_best_threshold', operating_threshold, prog_bar=False, logger=True, batch_size=len(all_logits))
+                self.log('val_best_precision', best_precision, prog_bar=False, logger=True, batch_size=len(all_logits))
+                self.log('val_best_recall', best_recall, prog_bar=False, logger=True, batch_size=len(all_logits))
+                self.log('val_best_f1', best_f1, prog_bar=False, logger=True, batch_size=len(all_logits))
 
-            # Log the final AUC-PR
+            except ValueError as e:
+                logger.warning(f"---AUC-PR calculation failed: {e}")
+                auc_pr = 0.0
+
             self.log('val_auc_pr', auc_pr, prog_bar=True, logger=True, batch_size=len(all_logits))
-        else:
-        #     logger.debug(f"---Skipping AUC-PR calculation for epoch: {self.current_epoch}")
+        finally:
             self.validation_outputs = []
 
     def on_test_epoch_start(self):
         self.test_outputs = []
+        self._test_counts = {"tp": 0.0, "fp": 0.0, "fn": 0.0, "tn": 0.0}
 
     
     def on_test_epoch_end(self):
@@ -883,22 +1100,37 @@ class Segmentation_training_loop(pl.LightningModule):
         logger.debug(f'+++++++++++++    on test epoch end')
         if not self.test_outputs:
             raise ValueError("---test outputs are empty. Check your test_step implementation.")
+
+        # Pooled confusion counts are the single source of truth for iou/precision/recall/f1.
+        pooled = metrics_from_counts(
+            torch.tensor(self._test_counts["tp"]),
+            torch.tensor(self._test_counts["fp"]),
+            torch.tensor(self._test_counts["fn"]),
+            torch.tensor(self._test_counts["tn"]),
+        )
+        self.log('iou_test', pooled["iou"], prog_bar=True, logger=True)
+        self.log('precision_test', pooled["precision"], prog_bar=True, logger=True)
+        self.log('recall_test', pooled["recall"], prog_bar=True, logger=True)
+        self.log('f1_test', pooled["f1"], prog_bar=True, logger=True)
+        self.log('thresh_test', self.metric_threshold, logger=True)
+
         # Aggregate outputs
         all_logits = torch.cat([output['logits'] for output in self.test_outputs], dim=0)
         all_masks = torch.cat([output['masks'] for output in self.test_outputs], dim=0)
+        all_valid = torch.cat([output['valid'] for output in self.test_outputs], dim=0)
 
         # Convert to NumPy arrays
         logits_np = torch.sigmoid(all_logits).cpu().numpy().flatten()
         masks_np = all_masks.cpu().numpy().flatten()
+        valid_np = all_valid.cpu().numpy().flatten().astype(bool)
 
-        # GET RID OF THE 255 INVALID PIXELS AND FILTER BOTH ARRAYS
-        valid_mask = masks_np != 255
-        if valid_mask.sum() == 0:
-            raise ValueError("Test batch contains only ignore pixels.")
-        
+        # Use the same valid-pixel mask as the pooled fixed-threshold metrics above.
+        if valid_np.sum() == 0:
+            raise ValueError("Test batch contains only invalid pixels.")
+
         # Apply mask to both logits and labels to keep only valid pixels
-        logits_np = logits_np[valid_mask]
-        masks_np = masks_np[valid_mask]
+        logits_np = logits_np[valid_np]
+        masks_np = masks_np[valid_np]
 
         # Debugging statistics
         logger.debug(f"Test AUC-PR calculation:")
@@ -932,37 +1164,8 @@ class Segmentation_training_loop(pl.LightningModule):
         self.log('auc_pr_test', auc_pr, prog_bar=True, logger=True, batch_size=len(all_logits))
 
     def metrics_maker(self, logits, masks, valid, job_type, loss, loss_description, lr=None):
-        probs = torch.sigmoid(logits) 
-        preds = (probs > self.metric_threshold).int()
         batch_size = logits.shape[0]
-        # logger.debug(f'---metric threshod={mthresh}')
-        if valid.sum() == 0:
-        # skip batch that contains only ignore pixels
-            zero = logits.new_tensor(0.0)
-            return zero, zero, zero, zero
-
-        # Keep the segmentation tensor shape and exclude ignore pixels with masked counts.
-        valid_bool = valid.bool()
-        preds_bool = preds.bool()
-        masks_bool = masks.bool()
-
-        tp = ((preds_bool == 1) & (masks_bool == 1) & valid_bool).sum(dim=(1, 2, 3)).float()
-        fp = ((preds_bool == 1) & (masks_bool == 0) & valid_bool).sum(dim=(1, 2, 3)).float()
-        fn = ((preds_bool == 0) & (masks_bool == 1) & valid_bool).sum(dim=(1, 2, 3)).float()
-        tn = ((preds_bool == 0) & (masks_bool == 0) & valid_bool).sum(dim=(1, 2, 3)).float()
-
-        eps = logits.new_tensor(1e-8)
-        iou = tp / (tp + fp + fn + eps)
-        precision = tp / (tp + fp + eps)
-        recall = tp / (tp + fn + eps)
-        f1 = 2 * tp / (2 * tp + fp + fn + eps)
-
-        ioumean = iou.mean()
-        precisionmean = precision.mean()
-        recallmean = recall.mean()
-        f1mean = f1.mean()
-
-        assert loss is not None, f"Loss is None for {job_type} job" 
+        assert loss is not None, f"Loss is None for {job_type} job"
 
         # Logging
         if job_type == 'train':
@@ -971,19 +1174,23 @@ class Segmentation_training_loop(pl.LightningModule):
         elif job_type == 'val':
             self.log('val_loss', loss, prog_bar=True, on_step=True, on_epoch=True, batch_size=batch_size)
 
-        if not job_type == 'train':
-            self.log(f'iou_{job_type}', ioumean, prog_bar=True, on_step=False, on_epoch=True, batch_size=batch_size)
-            self.log(f'precision_{job_type}', precisionmean, prog_bar=True, on_step=False, on_epoch=True, batch_size=batch_size )
-            self.log(f'recall_{job_type}', recallmean, prog_bar=True, on_step=False, on_epoch=True, batch_size=batch_size)
-            self.log(f'f1_{job_type}', f1mean, prog_bar=True, on_step=False, on_epoch=True, batch_size=batch_size )
-            self.log(f'thresh_{job_type}', self.metric_threshold, batch_size=batch_size)
-            # Precision-Recall Curve Logging (Binary Classification)
-            # wandb_pr = wandb.plot.pr_curve(masks, probs, title=f"Precision-Recall Curve {job_type}")
-            # self.log({"pr": wandb_pr})
-     
+        if valid.sum() == 0:
+            # skip batch that contains only ignore pixels
+            zero = logits.new_tensor(0.0)
+            return zero, zero, zero, zero
 
-    
-        return ioumean, precisionmean, recallmean, f1mean
+        # Single source of truth for confusion counts and derived ratios (pooled, not per-image).
+        tp, fp, fn, tn = compute_confusion_counts(logits, masks, valid, self.metric_threshold)
+
+        if job_type in ('val', 'test'):
+            counts = self._val_counts if job_type == 'val' else self._test_counts
+            counts["tp"] += tp.item()
+            counts["fp"] += fp.item()
+            counts["fn"] += fn.item()
+            counts["tn"] += tn.item()
+
+        batch_metrics = metrics_from_counts(tp, fp, fn, tn)
+        return batch_metrics["iou"], batch_metrics["precision"], batch_metrics["recall"], batch_metrics["f1"]
     
 
 

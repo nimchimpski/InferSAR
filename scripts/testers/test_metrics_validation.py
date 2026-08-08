@@ -4,29 +4,37 @@ Tests F1, IoU, precision, recall against hand-calculated expected values.
 Confirms smp.metrics formulas are correct.
 """
 
-import torch
 import numpy as np
-import segmentation_models_pytorch as smp
+import pytest
 from pathlib import Path
 
+pytestmark = [pytest.mark.train]
+
+torch = pytest.importorskip("torch", reason="train tests require torch")
+smp = pytest.importorskip(
+    "segmentation_models_pytorch",
+    reason="train tests require segmentation_models_pytorch",
+)
+
+
 def test_perfect_prediction():
-    """All predictions correct → F1=1.0, IoU=1.0, Precision=1.0, Recall=1.0"""
+    """All predictions correct -> F1=1.0, IoU=1.0, Precision=1.0, Recall=1.0"""
     print("\n=== Test 1: Perfect Prediction ===")
     preds = torch.ones(1, 1, 4, 4, dtype=torch.int32)
     masks = torch.ones(1, 1, 4, 4, dtype=torch.int32)
-    
+
     tp, fp, fn, tn = smp.metrics.get_stats(preds, masks.long(), mode='binary')
     iou = smp.metrics.iou_score(tp, fp, fn, tn).mean().item()
     f1 = smp.metrics.f1_score(tp, fp, fn, tn).mean().item()
     precision = smp.metrics.precision(tp, fp, fn, tn).mean().item()
     recall = smp.metrics.recall(tp, fp, fn, tn).mean().item()
-    
+
     print(f"TP={tp.item()}, FP={fp.item()}, FN={fn.item()}, TN={tn.item()}")
-    print(f"Expected: F1=1.0, IoU=1.0, Precision=1.0, Recall=1.0")
+    print("Expected: F1=1.0, IoU=1.0, Precision=1.0, Recall=1.0")
     print(f"Actual:   F1={f1:.4f}, IoU={iou:.4f}, Precision={precision:.4f}, Recall={recall:.4f}")
     assert abs(f1 - 1.0) < 1e-6, f"F1 mismatch: {f1}"
     assert abs(iou - 1.0) < 1e-6, f"IoU mismatch: {iou}"
-    print("✓ PASS")
+    print("PASS")
 
 
 def test_all_false_negatives():

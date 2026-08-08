@@ -27,6 +27,29 @@ def create_subset(mode, file_list, dataset_pth, stage,  subset_fraction , bs, nu
     return dl
 
 
+def compute_confusion_counts(logits, masks, valid, threshold):
+    """Single source of truth for pooled TP/FP/FN/TN over all valid pixels in a batch."""
+    preds_bool = torch.sigmoid(logits) > threshold
+    masks_bool = masks.bool()
+    valid_bool = valid.bool()
+
+    tp = (preds_bool & masks_bool & valid_bool).sum()
+    fp = (preds_bool & ~masks_bool & valid_bool).sum()
+    fn = (~preds_bool & masks_bool & valid_bool).sum()
+    tn = (~preds_bool & ~masks_bool & valid_bool).sum()
+    return tp.float(), fp.float(), fn.float(), tn.float()
+
+
+def metrics_from_counts(tp, fp, fn, tn, eps=1e-8):
+    """Single formula for iou/precision/recall/f1 from pooled confusion counts."""
+    return {
+        "iou": tp / (tp + fp + fn + eps),
+        "precision": tp / (tp + fp + eps),
+        "recall": tp / (tp + fn + eps),
+        "f1": 2 * tp / (2 * tp + fp + fn + eps),
+    }
+
+
 # FOR INFERENCE / COMPARISON FN
 def calculate_metrics(logits, masks, metric_threshold):
     """

@@ -62,6 +62,30 @@ Conda activate floodenv2
 (For pre-processing functions use floodenv3)
 Dependencies are in  environment.yml, package root level.
 
+### TESTING (PYTEST)
+The project uses a split environment strategy for tests:
+- Preprocess tests run in the geospatial environment (rasterio/GDAL stack).
+- Train tests run in the ML environment (torch/lightning/smp stack).
+
+This is intentional and helps keep dependencies stable and easier to debug.
+
+From the InferSAR project root:
+
+Run preprocess-scoped tests:
+`conda run -n floodai_preproc python -m pytest -q -m preproc`
+
+Run train-scoped tests (in your torch-enabled env):
+`python -m pytest -q -m train`
+
+Run all tests (with env-specific skips where needed):
+`python -m pytest -q`
+
+Current markers:
+- `preproc`: geospatial preprocessing tests
+- `train`: training/inference stack tests
+- `data`: tests requiring local fixture files under data/
+- `slow`: longer-running tests
+
 ### THE CONFIG FILE
 
 Takes an unescaped  backslashed windows path for the input SAR file, input analysis extent and output folder location.

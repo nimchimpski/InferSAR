@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 import sys
 import os
 import click
+import csv
 from typing import Callable, BinaryIO, Match, Pattern, Tuple, Union, Optional, List
 import time
 import wandb
@@ -75,7 +76,7 @@ from datetime import datetime
 project_path = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_path))
 
-from scripts.process.process_helpers import handle_interrupt, read_minmax_from_json, print_tiff_info_TSX, detect_input_is_linear
+from scripts.process.process_helpers import handle_interrupt, read_minmax_from_json, print_tiff_info_TSX, detect_input_is_linear, detect_input_is_linear_multiband
 from scripts.process.process_tiffs import create_event_datacube_copernicus, reproject_to_4326_gdal, make_float32_inf, resample_tiff_gdal, tile_geotiff_directly
 from scripts.process.process_dataarrays import tile_datacube_rxr_inf
 from scripts.train.train_helpers import is_sweep_run, pick_device
@@ -114,6 +115,91 @@ def prepare_inference_band(input_path: Path, extracted: Path) -> Path:
 
     logger.info(f"---Inference raster already in EPSG:4326: {float32_path}")
     return float32_path
+
+
+def resolve_dataset_input_scale(
+    csv_path: Path,
+    images_path: Path,
+    sample_count: int = 20,
+    dataset_label: str = "dataset",
+) -> bool:
+    """
+    Detect whether dataset tiles appear to be linear power or dB.
+    Returns True for linear input, False for dB input.
+    """
+    csv_path = Path(csv_path)
+    images_path = Path(images_path)
+
+    if not csv_path.exists():
+        logger.warning(
+            f"{dataset_label} CSV not found for scale detection: {csv_path}. Defaulting to dB."
+        )
+        return False
+
+    tile_names = []
+    with csv_path.open(newline="") as f:
+        reader = csv.reader(f)
+        next(reader, None)
+        for row in reader:
+            if not row:
+                continue
+            tile_name = row[0].strip()
+            if tile_name:
+                tile_names.append(tile_name)
+
+    if not tile_names:
+        logger.warning(
+            f"No {dataset_label} tile names found for scale detection. Defaulting to dB."
+        )
+        return False
+
+    sample_n = min(sample_count, len(tile_names))
+    sampled_names = random.sample(tile_names, sample_n)
+
+    linear_votes = 0
+    checked = 0
+    for tile_name in sampled_names:
+        tile_path = images_path / tile_name
+        if not tile_path.exists():
+            continue
+
+        try:
+            is_linear, stats = detect_input_is_linear_multiband(tile_path, return_stats=True)
+            checked += 1
+            linear_votes += int(is_linear)
+            logger.debug(
+                f"Scale check {tile_name}: {'linear' if is_linear else 'dB'} "
+                f"(p50={stats.get('p50', float('nan')):.3f}, "
+                f"p99={stats.get('p99', float('nan')):.3f}, "
+                f"frac_lt_zero={stats.get('frac_lt_zero', float('nan')):.3f}, "
+                f"ambiguous={stats.get('ambiguous', False)})"
+            )
+        except Exception as exc:
+            logger.warning(f"Scale check failed for {tile_path.name}: {exc}")
+
+    if checked == 0:
+        logger.warning(
+            f"Scale detection could not inspect any {dataset_label} tiles. Defaulting to dB."
+        )
+        return False
+
+    linear_ratio = linear_votes / checked
+    resolved_linear = linear_ratio > 0.5
+    logger.info(
+        f"Resolved {dataset_label} input scale from {checked} sampled tiles: "
+        f"{'linear' if resolved_linear else 'dB'} (linear_ratio={linear_ratio:.2f})"
+    )
+    return resolved_linear
+
+
+def resolve_test_input_scale(csv_path: Path, images_path: Path, sample_count: int = 20) -> bool:
+    """Backward-compatible wrapper for test scale resolution."""
+    return resolve_dataset_input_scale(
+        csv_path=csv_path,
+        images_path=images_path,
+        sample_count=sample_count,
+        dataset_label="test",
+    )
 
 # Suppress num_workers warning - we've tested and num_workers=0 is optimal for our dataset
 warnings.filterwarnings('ignore', '.*does not have many workers.*')
@@ -186,6 +272,8 @@ def main(train, test, inference, config, fine_tune):
     #......................................................
     # CONFIGURATION PARAMETERS
     DUAL_BAND_INPUT = False
+    # Scale is resolved from data at runtime for train/test/inference.
+    input_is_linear = None
 
     # Training parameters
     dataset_name = "S1F11"  # "sen1floods11" or "copernicus_floods"
@@ -222,13 +310,14 @@ def main(train, test, inference, config, fine_tune):
     # sensor = 'S1'
     # date= '030126'
     # ***********************
-    threshold = 0.2 # THRESHOLD FOR METRICS + STITCHING.
+    threshold = 0.45 # THRESHOLD FOR METRICS + STITCHING.
     # **********************
     # ........................................................
-    if DUAL_BAND_INPUT:
-        print("="*40 +f'\nDUAL BAND INPUT = {DUAL_BAND_INPUT}, NOT CHECKED')
-    else:
-        print("="*40 +f'\nINPUT IS SEPERATE , SINGLE BAND FILES, NOT CHECKED!!!')
+    if inference:
+        if DUAL_BAND_INPUT:
+            print("="*40 + f'\nINFERENCE INPUT: DUAL-BAND FILE (scale will be detected)')
+        else:
+            print("="*40 + f'\nINFERENCE INPUT: SEPARATE VV/VH FILES (scale will be detected)')
     print("="*40 +f'\nWandB ONLINE = {WandB_online}')
     if WandB_online:
         print("."*40)
@@ -364,7 +453,7 @@ def main(train, test, inference, config, fine_tune):
 
     # Load dataset statistics (calculated beforehand)
     stats_file = paths.project_path / 'configs' / 'global_minmax_INPUT' / 'global_minmax.json'
-    print(f'=' * 40, '\nLoading dataset stats from: {stats_file.name}')
+    print(f"{'=' * 40}\nLoading dataset stats from: {stats_file.name}")
     if stats_file.exists():
         with open(stats_file, 'r') as f:
             stats = json.load(f)
@@ -634,6 +723,11 @@ def main(train, test, inference, config, fine_tune):
     
     
     if train:
+        input_is_linear = resolve_dataset_input_scale(
+            paths.train_csv,
+            paths.images_path,
+            dataset_label="train",
+        )
         # Training dataset
         # normalisation handled in dataset class
         train_dataset = Sen1Dataset(
@@ -682,6 +776,11 @@ def main(train, test, inference, config, fine_tune):
         val_dl = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, persistent_workers=persistent_workers)
         
     elif test:
+        input_is_linear = resolve_dataset_input_scale(
+            paths.test_csv,
+            paths.images_path,
+            dataset_label="test",
+        )
 
         # Test dataset
         test_dataset = Sen1Dataset(
@@ -691,7 +790,7 @@ def main(train, test, inference, config, fine_tune):
             labels_path=paths.labels_path,
             csv_path=paths.test_csv,
             image_code=paths.image_code,
-            input_is_linear=False,
+            input_is_linear=input_is_linear,
             db_min=db_min,
             db_max=db_max,
             vv_mean = vv_mean,
@@ -708,6 +807,10 @@ def main(train, test, inference, config, fine_tune):
         
     elif inference:
         logger.info(">>>> CREATING INFERENCE DATALOADER")
+        if input_is_linear is None:
+            raise RuntimeError(
+                "Inference input scale was not resolved. Ensure MAKE_TIFS runs and VV/VH inputs are valid."
+            )
         # Inference dataset
         inference_dataset = Sen1Dataset(
             job_type="inference",
@@ -803,9 +906,19 @@ def main(train, test, inference, config, fine_tune):
             else 32
         )
 
+        if train:
+            effective_log_steps = max(1, min(LOGSTEPS, len(train_dl)))
+        else:
+            effective_log_steps = max(1, min(LOGSTEPS, len(test_dl)))
+        if effective_log_steps != LOGSTEPS:
+            logger.info(
+                f"Adjusted log_every_n_steps from {LOGSTEPS} to {effective_log_steps} "
+                "to match dataloader length."
+            )
+
         trainer = pl.Trainer(
             logger=wandb_logger,
-            log_every_n_steps=LOGSTEPS,
+            log_every_n_steps=effective_log_steps,
             max_epochs=config.max_epoch,
             accelerator=accelerator,
             devices=1,
@@ -915,7 +1028,11 @@ def main(train, test, inference, config, fine_tune):
             logger.warning(f"No suitable input image found in {extracted} for stitching")
             logger.info("Prediction tiles created but stitching skipped")  
   
-    print("\n" + "="*40 + "\nFINISHED STITCHING IMAGE\nRUN COMPLETE\n" + "="*40 + "\n")
+        print("\n" + "="*40 + "\nFINISHED STITCHING IMAGE\nRUN COMPLETE\n" + "="*40 + "\n")
+    elif train:
+        print("\n" + "="*40 + "\nTRAINING RUN COMPLETE\n" + "="*40 + "\n")
+    elif test:
+        print("\n" + "="*40 + "\nTEST RUN COMPLETE\n" + "="*40 + "\n")
     # Cleanup
     run_time = (time.time() - start) / 60
     print(f" Total runtime: {run_time:.2f} minutes")

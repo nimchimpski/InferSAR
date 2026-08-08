@@ -55,7 +55,7 @@ def _resolve_scale_from_samples(samples):
         "frac_lt_zero": frac_lt_zero,
     }
 
-    logger.info(
+    logger.debug(
         "Input scale check: "
         f"min={vmin:.6f}, max={vmax:.6f}, "
         f"p1={p1:.6f}, p50={p50:.6f}, p99={p99:.6f}, "
@@ -75,23 +75,52 @@ def _resolve_scale_from_samples(samples):
     return True, True, stats
 
 
-def detect_input_is_linear(vv_path, vh_path, sample_size=200000, seed=42, return_stats=False):
+def _collect_scale_samples(raster_band_specs, sample_size=200000, seed=42):
     """
-    Infer whether SAR input values are linear power or already in dB.
+    Collect sampled valid pixel values for scale detection.
 
+    Args:
+        raster_band_specs: Iterable of (path_like, band_index) tuples.
     Returns:
-        bool: True if values look linear, False if values look like dB.
+        List of 1D sampled arrays.
     """
     rng = np.random.default_rng(seed)
     samples = []
 
-    for raster_path in (Path(vv_path), Path(vh_path)):
+    for raster_path, band_index in raster_band_specs:
+        raster_path = Path(raster_path)
         with rasterio.open(raster_path) as src:
-            vals = _sample_valid_band_values(src, band_index=1, sample_size=sample_size, rng=rng)
+            if band_index < 1 or band_index > src.count:
+                logger.warning(
+                    f"Band {band_index} not available in {raster_path.name}; skipping."
+                )
+                continue
+
+            vals = _sample_valid_band_values(src, band_index=band_index, sample_size=sample_size, rng=rng)
             if vals.size == 0:
-                logger.warning(f"No valid pixels found in {raster_path.name} for scale detection.")
+                logger.warning(
+                    f"No valid pixels found in band {band_index} of {raster_path.name} for scale detection."
+                )
                 continue
             samples.append(vals)
+
+    return samples
+
+
+def detect_input_is_linear_from_raster_bands(raster_band_specs, sample_size=200000, seed=42, return_stats=False):
+    """
+    Infer whether SAR inputs are linear power or already in dB from raster-band specs.
+
+    Args:
+        raster_band_specs: Iterable of (path_like, band_index) tuples.
+    Returns:
+        bool by default, or tuple(bool, stats) when return_stats=True.
+    """
+    samples = _collect_scale_samples(
+        raster_band_specs=raster_band_specs,
+        sample_size=sample_size,
+        seed=seed,
+    )
 
     if not samples:
         logger.warning("Scale detection found no valid samples; defaulting to linear input.")
@@ -104,6 +133,22 @@ def detect_input_is_linear(vv_path, vh_path, sample_size=200000, seed=42, return
     if return_stats:
         return is_linear, stats
     return is_linear
+
+
+def detect_input_is_linear(vv_path, vh_path, sample_size=200000, seed=42, return_stats=False):
+    """
+    Infer whether SAR input values are linear power or already in dB.
+
+    Returns:
+        bool: True if values look linear, False if values look like dB.
+    """
+    raster_band_specs = [(vv_path, 1), (vh_path, 1)]
+    return detect_input_is_linear_from_raster_bands(
+        raster_band_specs=raster_band_specs,
+        sample_size=sample_size,
+        seed=seed,
+        return_stats=return_stats,
+    )
 
 
 def detect_input_is_linear_multiband(image_path, band_indices=(1, 2), sample_size=200000, seed=42, return_stats=False):
@@ -117,36 +162,13 @@ def detect_input_is_linear_multiband(image_path, band_indices=(1, 2), sample_siz
     Returns:
         bool by default, or tuple(bool, stats) when return_stats=True.
     """
-    rng = np.random.default_rng(seed)
-    samples = []
-
-    with rasterio.open(Path(image_path)) as src:
-        for band_index in band_indices:
-            if band_index < 1 or band_index > src.count:
-                logger.warning(
-                    f"Band {band_index} not available in {Path(image_path).name}; skipping."
-                )
-                continue
-
-            vals = _sample_valid_band_values(src, band_index=band_index, sample_size=sample_size, rng=rng)
-            if vals.size == 0:
-                logger.warning(
-                    f"No valid pixels found in band {band_index} of {Path(image_path).name} for scale detection."
-                )
-                continue
-            samples.append(vals)
-
-    if not samples:
-        logger.warning("Scale detection found no valid samples; defaulting to linear input.")
-        if return_stats:
-            return True, {"ambiguous": True, "reason": "no_valid_samples"}
-        return True
-
-    is_linear, ambiguous, stats = _resolve_scale_from_samples(samples)
-    stats["ambiguous"] = ambiguous
-    if return_stats:
-        return is_linear, stats
-    return is_linear
+    raster_band_specs = [(image_path, band_index) for band_index in band_indices]
+    return detect_input_is_linear_from_raster_bands(
+        raster_band_specs=raster_band_specs,
+        sample_size=sample_size,
+        seed=seed,
+        return_stats=return_stats,
+    )
 # CHECKS FOR INITIAL FOLDERS
 
 def check_single_input_filetype(folder,  title, fsuffix1, fsuffix2):
