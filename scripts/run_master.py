@@ -300,7 +300,10 @@ def main(train, test, inference, config, fine_tune):
     # Data processing parameters
     # db_min = None
     # db_max = None
-    tile_size = 256
+    # Train/test read pre-made non-overlapping 256px tiles (fixed dataset format).
+    # Inference tiles are generated on the fly, so tile size can be larger to push the
+    # padded-border/receptive-field bias further from the kept tile center (see repo memory).
+    tile_size = 1024 if inference else 256
     # Inference uses overlapping tiles so tile-edge context is preserved for stitching;
     # train/test read pre-made non-overlapping tiles, so stride == tile_size there.
     stride = max(1, int(tile_size * 0.75)) if inference else tile_size
@@ -312,7 +315,7 @@ def main(train, test, inference, config, fine_tune):
     # sensor = 'S1'
     # date= '030126'
     # ***********************
-    threshold = 0.6 # THRESHOLD FOR METRICS + STITCHING.
+    threshold = 0.6 # THRESHOLD FOR METRICS + STITCHING.//////////////
     # **********************
     # ........................................................
     if inference:
@@ -952,7 +955,6 @@ def main(train, test, inference, config, fine_tune):
     elif inference:
         logger.info("="*40 + "\n>>>>> MAKING PREDICTIONS ON TILES")
 
-
         pred_tiles_path = inference_paths['pred_tiles_path']
         # DELETE THE PREDICTION FOLDER IF IT EXISTS
         if pred_tiles_path.exists():
@@ -960,74 +962,81 @@ def main(train, test, inference, config, fine_tune):
             shutil.rmtree(pred_tiles_path)
         pred_tiles_path.mkdir(exist_ok=True)
 
-        #  # MAKE PREDICTION ON TILES ////////////////////////////////
-
+        try:
+            #  # MAKE PREDICTION ON TILES ////////////////////////////////
             # CREATE A WEIGHT MATRIX FOR BLENDING
+            with torch.no_grad():
+                t = 1
+                global_min = float('inf')
+                global_max = float('-inf')
+                for imgs, valids, fnames in tqdm(dataloader, desc="Predict"):
+                    logger.debug(f'/////Processing batch {t} with {imgs.shape[0]} tiles')
+                    t += 1
+                    logger.debug(f'images shape: {imgs.shape}, valids shape: {valids.shape}, fnames: {fnames}')
+                    logger.debug(f"First image filename: {fnames[0]}")
 
-        with torch.no_grad():
-            t = 1
-            global_min = float('inf')
-            global_max = float('-inf')
-            for imgs, valids, fnames in tqdm(dataloader, desc="Predict"):
-                logger.debug(f'/////Processing batch {t} with {imgs.shape[0]} tiles')
-                t += 1
-                logger.debug(f'images shape: {imgs.shape}, valids shape: {valids.shape}, fnames: {fnames}')
-                logger.debug(f"First image filename: {fnames[0]}")
+                    first_img = imgs[0]
 
-                first_img = imgs[0]
+                    logger.debug(f"First image tensor shape: {first_img.shape}")
+                    logger.debug(f"First image dtype: {first_img.dtype}")
+                    logger.debug(f"First image min: {first_img.min().item()}, max: {first_img.max().item()}")
+            
+                    # Inspect each channel
+                    vv = first_img[0]
+                    vh = first_img[1]
+                    logger.debug(f"VV min/max: {vv.min().item()}/{vv.max().item()}")
+                    logger.debug(f"VH min/max: {vh.min().item()}/{vh.max().item()}")
 
-                logger.debug(f"First image tensor shape: {first_img.shape}")
-                logger.debug(f"First image dtype: {first_img.dtype}")
-                logger.debug(f"First image min: {first_img.min().item()}, max: {first_img.max().item()}")
-        
-                # Inspect each channel
-                vv = first_img[0]
-                vh = first_img[1]
-                logger.debug(f"VV min/max: {vv.min().item()}/{vv.max().item()}")
-                logger.debug(f"VH min/max: {vh.min().item()}/{vh.max().item()}")
+                    lmin, lmax = min(vv.min(),vh.min()), max(vv.max(), vh.max())
+                    global_min = min(global_min, lmin)
+                    global_max = max(global_max, lmax)
+                    
+                    imgs   = imgs.to(device)            # [B,2,H,W]
+                    logits = model(imgs)
+                    probs  = torch.sigmoid(logits).cpu()  # back to CPU for numpy/rasterio
+                    # preds  = (probs > threshold).float()  # [B,1,H,W]
+                    for b, name in enumerate(fnames):
+                        out = probs[b, 0].numpy()                 # 2-D
+                        out[~valids[b, 0].numpy().astype(bool)] = 0  # mask invalid px
 
-                lmin, lmax = min(vv.min(),vh.min()), max(vv.max(), vh.max())
-                global_min = min(global_min, lmin)
-                global_max = max(global_max, lmax)
-                
-                imgs   = imgs.to(device)            # [B,2,H,W]
-                logits = model(imgs)
-                probs  = torch.sigmoid(logits).cpu()  # back to CPU for numpy/rasterio
-                # preds  = (probs > threshold).float()  # [B,1,H,W]
-                for b, name in enumerate(fnames):
-                    out = probs[b, 0].numpy()                 # 2-D
-                    out[~valids[b, 0].numpy().astype(bool)] = 0  # mask invalid px
+                        src_path = image_tiles_path / name
+                        with rasterio.open(src_path) as src:
+                            profile = src.profile
+                        profile.update(dtype="float32", count=1)
 
-                    src_path = image_tiles_path / name
-                    with rasterio.open(src_path) as src:
-                        profile = src.profile
-                    profile.update(dtype="float32", count=1)
+                        dst_path = pred_tiles_path / name
+                        with rasterio.open(dst_path, "w", **profile) as dst:
+                            dst.write(out.astype("float32"), 1)  
+                print(f'GLOBAL MIN MAX OVER ALL TILES: {global_min} , {global_max}')
+                ims_list = list(pred_tiles_path.glob("*.tif"))
+                if len(ims_list) > 0:
+                    # Load metadata for stitching
+                    logger.debug(f"Loading metadata from: {metadata_path}")
+                    if not metadata_path.exists():
+                        return
 
-                    dst_path = pred_tiles_path / name
-                    with rasterio.open(dst_path, "w", **profile) as dst:
-                        dst.write(out.astype("float32"), 1)  
-            print(f'GLOBAL MIN MAX OVER ALL TILES: {global_min} , {global_max}')
-            ims_list = list(pred_tiles_path.glob("*.tif"))
-            if len(ims_list) > 0:
-                # Load metadata for stitching
-                logger.debug(f"Loading metadata from: {metadata_path}")
-                if not metadata_path.exists():
-                    return
+                    with open(metadata_path, "r") as f:
+                        metadata = json.load(f) 
 
-                with open(metadata_path, "r") as f:
-                    metadata = json.load(f) 
+            # STITCH PREDICTION TILES /////////////////////////////////////////////
+            input_image = vv_image_path if inference else (next(extracted.rglob("*.tif"), None) if extracted.exists() else None)
+            if input_image and input_image.suffix.lower() == '.tif':
+                logger.debug(f"ref image for stitching: {input_image}")
+                logger.debug(f"pred_tiles_path: {pred_tiles_path}")
+                logger.debug(f'extracted folder: {extracted}')
+                stitch_tiles(metadata, pred_tiles_path, stitched_img_path, input_image, tile_size, stride, threshold)
 
-        # STITCH PREDICTION TILES /////////////////////////////////////////////
-
-        input_image = vv_image_path if inference else (next(extracted.rglob("*.tif"), None) if extracted.exists() else None)
-        if input_image and input_image.suffix.lower() == '.tif':
-            logger.debug(f"ref image for stitching: {input_image}")
-            logger.debug(f"pred_tiles_path: {pred_tiles_path}")
-            logger.debug(f'extracted folder: {extracted}')
-            stitch_tiles(metadata, pred_tiles_path, stitched_img_path, input_image, tile_size, stride, threshold)
-        else:
-            logger.warning(f"No suitable input image found in {extracted} for stitching")
-            logger.info("Prediction tiles created but stitching skipped")  
+                if stitched_img_path.exists():
+                    logger.info(f"Stitched image written to: {stitched_img_path}")
+                else:
+                    logger.warning(f"Stitched image was not created at {stitched_img_path}")
+            else:
+                logger.warning(f"No suitable input image found in {extracted} for stitching")
+                logger.info("Prediction tiles created but stitching skipped")
+        finally:
+            if image_tiles_path.exists():
+                logger.info(f"Deleting inference tiles folder: {image_tiles_path}")
+                shutil.rmtree(image_tiles_path)
   
         print("\n" + "="*40 + "\nFINISHED STITCHING IMAGE\nRUN COMPLETE\n" + "="*40 + "\n")
     elif train:
