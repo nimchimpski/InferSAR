@@ -176,7 +176,7 @@ def main(train, test, inference, config, fine_tune):
     LOGSTEPS = 50
     PRETRAINED = True
     in_channels = 2 # TODO ???
-    DEVRUN = 0
+    DEVRUN = 1
     # Loss function parameters
     loss_description = 'bce_dice' # 'smp_bce' #  ''focal'
 
@@ -723,7 +723,7 @@ def main(train, test, inference, config, fine_tune):
     
     if ckpt_path is not None:
         print(f'='*40 + f'\nCKPT NAME: {ckpt_path.name}\n' + '='*40)
-        print('////// IS THEIS THE CORRECT CHECKPOINT !!!!! ///////')
+        print('////// IS THIS THE CORRECT CHECKPOINT !!!!! ///////')
     else:
         print(f'='*40 + '\nCKPT NAME: None (training from scratch)\n' + '='*40)
 
@@ -923,6 +923,12 @@ def main(train, test, inference, config, fine_tune):
             if image_tiles_path.exists():
                 logger.info(f"Deleting inference tiles folder: {image_tiles_path}")
                 shutil.rmtree(image_tiles_path)
+            if pred_tiles_path.exists():
+                logger.info(f"Deleting prediction tiles folder: {pred_tiles_path}")
+                shutil.rmtree(pred_tiles_path)
+            if extracted.exists():
+                logger.info(f"Deleting extracted intermediates folder: {extracted}")
+                shutil.rmtree(extracted)
   
         print("\n" + "="*40 + "\nFINISHED STITCHING IMAGE\nRUN COMPLETE\n" + "="*40 + "\n")
     elif train:
