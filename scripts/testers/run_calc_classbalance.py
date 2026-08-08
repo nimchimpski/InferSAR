@@ -62,7 +62,8 @@ def calc_ratio(tiles):
 #                     numlines = len(lines)
 #                     print(f"---{splitfolder.name} has {numlines} lines")
 
-input_path = Path("/Users/alexwebb/laptop_coding/floodai/InferSAR/data/4final/dataset/LabelHand")
+repo_root = Path(__file__).resolve().parents[2]
+input_path = repo_root / "data" / "4final" / "dataset" / "LabelHand"
 def main():
 
 

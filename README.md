@@ -4,6 +4,19 @@ This document is still under development, and parts stilll refer to FloodAI_V2 u
 
 INFERSAR is a lightweight field tool developed from FloodAI_V2, itself originally developed for the United Nations Satellite Centre (UNOSAT) to support rapid, high-accuracy flood mapping during emergency response operations. It was created from scratch as a fully modular, maintainable, and scalable codebase, designed to integrate smoothly into operational workflows. Existing preprocess code structure is optimised for training on the Sen1Floods11 dataset, but it also supports additional geospatial inputs like Digital Elevation Models (DEM) and terrain slope for improved segmentation performance in complex landscapes. Built on PyTorch Lightning, the system includes GPU-accelerated training, flexible architecture support, and seamless logging via Weights & Biases.
 
+## Results
+
+Example predictions (input | model prediction | ground truth):
+
+![Prediction sample 1](docs/images/prediction_sample_1.png)
+![Prediction sample 2](docs/images/prediction_sample_2.png)
+
+Mountain-shadow false positives were a persistent early failure mode (steep terrain shadow misclassified as water). Below is a working note from that investigation, flagging tile-edge context loss (tile overlap set to 0) as a likely contributor:
+
+![Tiling context-loss note](docs/images/vietnam_tiling_note.png)
+
+That hypothesis was later confirmed and fixed in InferSAR: see the tiling-artifact note under "Key Notes for Future Developers" below.
+
 ### Preprocessing Enhancements:   
 The preprocessing pipeline extracts the relevant data from Geotifs concatenating it into  xarray datasets along with other data such as DEM and SLOPE, which is then converted into machine-learning-ready tiles, with mappable layers as model input channels.
 Normalization steps included   log scaling, clipping, and Min-Max normalization   for SAR data, ensuring consistency during training and inference. Normalization is shown to have a huge impact on training results.
@@ -28,9 +41,8 @@ Training required ~30 minutes for 15 epochs on 10,000–20,000 samples, with no 
 ## Key Notes for Future Developers:    
 Further split up functions, using a Functional Programming approach (no side effects, limited I/O writes, return value based
 Add Unit tests.
-Explore overlapping tiling to improve model predictions at tile edges which is usually recommended. However, only few and certain data seem to cause tiling artifacts, so that may be an upstream problem solved in preprocessing.
+Diagnosed a tile-stitching boundary bias causing mosaic/checkerboard artifacts in low-contrast, ambiguous water regions (rivers unaffected due to strong signal): confirmed pixel-exact that the artifact aligned with the stitching margin, root-caused to independent per-tile CNN inference losing context at tile edges, and mitigated by enlarging the inference tile size/overlap margin. This is well-documented in some ML frameworks (e.g. MONAI's sliding-window inference) but commonly missed in custom/from-scratch geospatial pipelines.
 Completing STAC protocol integration for metadata access and fine grained dataset control.
-Access the Jira project management Wiki which is up to date.
 
 ## Generalization Testing and Results  
   

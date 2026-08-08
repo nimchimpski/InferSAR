@@ -76,8 +76,8 @@ from datetime import datetime
 project_path = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_path))
 
-from scripts.process.process_helpers import handle_interrupt, read_minmax_from_json, print_tiff_info_TSX, detect_input_is_linear, detect_input_is_linear_multiband
-from scripts.process.process_tiffs import create_event_datacube_copernicus, reproject_to_4326_gdal, make_float32_inf, resample_tiff_gdal, tile_geotiff_directly
+from scripts.process.process_helpers import handle_interrupt, read_minmax_from_json, print_tiff_info_TSX, detect_input_is_linear, detect_input_is_linear_multiband, resolve_dataset_input_scale
+from scripts.process.process_tiffs import create_event_datacube_copernicus, reproject_to_4326_gdal, make_float32_inf, resample_tiff_gdal, tile_geotiff_directly, prepare_inference_band
 from scripts.process.process_dataarrays import tile_datacube_rxr_inf
 from scripts.train.train_helpers import is_sweep_run, pick_device
 from scripts.train.train_classes import  UnetModel,   Segmentation_training_loop, Sen1Dataset
@@ -86,120 +86,6 @@ from scripts.inference_functions import create_weight_matrix, make_prediction_ti
 from scripts.paths_class import ProjectPaths
 
 start = time.time()
-
-
-def prepare_inference_band(input_path: Path, extracted: Path) -> Path:
-    """
-    Convert a single-band inference raster to float32 and reproject to EPSG:4326
-    when the source CRS does not already match the training contract.
-    """
-    input_path = Path(input_path)
-    extracted = Path(extracted)
-
-    with rasterio.open(input_path) as src:
-        if src.crs is None:
-            raise ValueError(f"Inference raster has no CRS: {input_path}")
-        logger.info(
-            f"---Preparing {input_path.name}: crs={src.crs}, res={src.res}, dtype={src.dtypes[0]}"
-        )
-        needs_reproject = src.crs.to_string() != "EPSG:4326"
-
-    float32_path = extracted / f"{input_path.stem}_float32.tif"
-    make_float32_inf(input_path, float32_path)
-
-    if needs_reproject:
-        reproj_path = extracted / f"{input_path.stem}_epsg4326.tif"
-        reproject_to_4326_gdal(float32_path, reproj_path, resampleAlg="bilinear")
-        logger.info(f"---Reprojected inference raster saved to {reproj_path}")
-        return reproj_path
-
-    logger.info(f"---Inference raster already in EPSG:4326: {float32_path}")
-    return float32_path
-
-
-def resolve_dataset_input_scale(
-    csv_path: Path,
-    images_path: Path,
-    sample_count: int = 20,
-    dataset_label: str = "dataset",
-) -> bool:
-    """
-    Detect whether dataset tiles appear to be linear power or dB.
-    Returns True for linear input, False for dB input.
-    """
-    csv_path = Path(csv_path)
-    images_path = Path(images_path)
-
-    if not csv_path.exists():
-        logger.warning(
-            f"{dataset_label} CSV not found for scale detection: {csv_path}. Defaulting to dB."
-        )
-        return False
-
-    tile_names = []
-    with csv_path.open(newline="") as f:
-        reader = csv.reader(f)
-        next(reader, None)
-        for row in reader:
-            if not row:
-                continue
-            tile_name = row[0].strip()
-            if tile_name:
-                tile_names.append(tile_name)
-
-    if not tile_names:
-        logger.warning(
-            f"No {dataset_label} tile names found for scale detection. Defaulting to dB."
-        )
-        return False
-
-    sample_n = min(sample_count, len(tile_names))
-    sampled_names = random.sample(tile_names, sample_n)
-
-    linear_votes = 0
-    checked = 0
-    for tile_name in sampled_names:
-        tile_path = images_path / tile_name
-        if not tile_path.exists():
-            continue
-
-        try:
-            is_linear, stats = detect_input_is_linear_multiband(tile_path, return_stats=True)
-            checked += 1
-            linear_votes += int(is_linear)
-            logger.debug(
-                f"Scale check {tile_name}: {'linear' if is_linear else 'dB'} "
-                f"(p50={stats.get('p50', float('nan')):.3f}, "
-                f"p99={stats.get('p99', float('nan')):.3f}, "
-                f"frac_lt_zero={stats.get('frac_lt_zero', float('nan')):.3f}, "
-                f"ambiguous={stats.get('ambiguous', False)})"
-            )
-        except Exception as exc:
-            logger.warning(f"Scale check failed for {tile_path.name}: {exc}")
-
-    if checked == 0:
-        logger.warning(
-            f"Scale detection could not inspect any {dataset_label} tiles. Defaulting to dB."
-        )
-        return False
-
-    linear_ratio = linear_votes / checked
-    resolved_linear = linear_ratio > 0.5
-    logger.info(
-        f"Resolved {dataset_label} input scale from {checked} sampled tiles: "
-        f"{'linear' if resolved_linear else 'dB'} (linear_ratio={linear_ratio:.2f})"
-    )
-    return resolved_linear
-
-
-def resolve_test_input_scale(csv_path: Path, images_path: Path, sample_count: int = 20) -> bool:
-    """Backward-compatible wrapper for test scale resolution."""
-    return resolve_dataset_input_scale(
-        csv_path=csv_path,
-        images_path=images_path,
-        sample_count=sample_count,
-        dataset_label="test",
-    )
 
 # Suppress num_workers warning - we've tested and num_workers=0 is optimal for our dataset
 warnings.filterwarnings('ignore', '.*does not have many workers.*')
@@ -306,7 +192,7 @@ def main(train, test, inference, config, fine_tune):
     tile_size = 1024 if inference else 256
     # Inference uses overlapping tiles so tile-edge context is preserved for stitching;
     # train/test read pre-made non-overlapping tiles, so stride == tile_size there.
-    stride = max(1, int(tile_size * 0.75)) if inference else tile_size
+    stride = max(1, int(tile_size * 0.5)) if inference else tile_size
     
     # Initialize variables
     stitched_img_path = None  # Will be set later based on mode

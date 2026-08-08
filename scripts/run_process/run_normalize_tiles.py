@@ -1,7 +1,8 @@
 from pathlib import Path
-    
+
+repo_root = Path(__file__).resolve().parents[2]
 tile_path = Path('/xxx')
-normalized_tiles_path = Path('/Users/alexwebb/laptop_coding/floodai/INFERSAR/data/4final/train_input')
+normalized_tiles_path = repo_root / 'data' / '4final' / 'train_input'
 
 def main(tile_path, normalized_tiles_path):
     print('++++IN PROCESS TILES NEW DIR')   

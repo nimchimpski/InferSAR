@@ -433,6 +433,34 @@ def reproject_to_4326_gdal(input_path, output_path, resampleAlg):
 
     return output_path   
 
+def prepare_inference_band(input_path: Path, extracted: Path) -> Path:
+    """
+    Convert a single-band inference raster to float32 and reproject to EPSG:4326
+    when the source CRS does not already match the training contract.
+    """
+    input_path = Path(input_path)
+    extracted = Path(extracted)
+
+    with rasterio.open(input_path) as src:
+        if src.crs is None:
+            raise ValueError(f"Inference raster has no CRS: {input_path}")
+        logger.info(
+            f"---Preparing {input_path.name}: crs={src.crs}, res={src.res}, dtype={src.dtypes[0]}"
+        )
+        needs_reproject = src.crs.to_string() != "EPSG:4326"
+
+    float32_path = extracted / f"{input_path.stem}_float32.tif"
+    make_float32_inf(input_path, float32_path)
+
+    if needs_reproject:
+        reproj_path = extracted / f"{input_path.stem}_epsg4326.tif"
+        reproject_to_4326_gdal(float32_path, reproj_path, resampleAlg="bilinear")
+        logger.info(f"---Reprojected inference raster saved to {reproj_path}")
+        return reproj_path
+
+    logger.info(f"---Inference raster already in EPSG:4326: {float32_path}")
+    return float32_path
+
 def reproject_to_4326_fixpx_gdal(input_path, output_path, resampleAlg, px_size):
     logger.info('+++in reproject_to_4326_fixpx_gdal fn')
     # logger.info(f'---resampleAlg= {resampleAlg}')

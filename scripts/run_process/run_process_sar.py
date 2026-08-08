@@ -30,7 +30,7 @@ def main(test=None):
 
     ############################################################################
     # data_src = Path(r"Y:\1NEW_DATA\1data\2interim\ALL TSX PROCESSING")
-    repo_root = Path('/Users/alexwebb/laptop_coding/floodai/InferSAR')
+    repo_root = Path(__file__).resolve().parents[2]
     events = repo_root / 'data' / '2interim' / 'events_extracted'
     data_src = Path('/Volumes/Lacie storage 6TB/SAR')
 

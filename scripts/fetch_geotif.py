@@ -33,12 +33,15 @@ else:
     print("Check: bbox correct? Dates have S1 coverage?")
 
 # Create output directory
-output_dir = Path("/Users/alexwebb/laptop_coding/floodai/InferSAR/data/1raw")
+repo_root = Path(__file__).resolve().parents[1]
+output_dir = repo_root / "data" / "1raw"
 # output_dir.mkdir(parents=True, exist_ok=True)
 
-# Get credentials from env
-username = os.getenv("ASF_USERNAME", "nimchimpski")
-password = os.getenv("ASF_PASSWORD", "l#7BeJbPC*TKl6")
+# Get credentials from env (set ASF_USERNAME / ASF_PASSWORD in .env, no fallback)
+username = os.getenv("ASF_USERNAME")
+password = os.getenv("ASF_PASSWORD")
+if not username or not password:
+    raise EnvironmentError("Set ASF_USERNAME and ASF_PASSWORD in your environment/.env")
 
 # Create a session with credentials
 session = asf.ASFSession()

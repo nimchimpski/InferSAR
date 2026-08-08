@@ -11,6 +11,7 @@ import fiona
 import json
 import random
 import sys
+import csv
 import logging
 from tqdm import tqdm
 
@@ -169,6 +170,81 @@ def detect_input_is_linear_multiband(image_path, band_indices=(1, 2), sample_siz
         seed=seed,
         return_stats=return_stats,
     )
+
+def resolve_dataset_input_scale(
+    csv_path: Path,
+    images_path: Path,
+    sample_count: int = 20,
+    dataset_label: str = "dataset",
+) -> bool:
+    """
+    Detect whether dataset tiles appear to be linear power or dB.
+    Returns True for linear input, False for dB input.
+    """
+    csv_path = Path(csv_path)
+    images_path = Path(images_path)
+
+    if not csv_path.exists():
+        logger.warning(
+            f"{dataset_label} CSV not found for scale detection: {csv_path}. Defaulting to dB."
+        )
+        return False
+
+    tile_names = []
+    with csv_path.open(newline="") as f:
+        reader = csv.reader(f)
+        next(reader, None)
+        for row in reader:
+            if not row:
+                continue
+            tile_name = row[0].strip()
+            if tile_name:
+                tile_names.append(tile_name)
+
+    if not tile_names:
+        logger.warning(
+            f"No {dataset_label} tile names found for scale detection. Defaulting to dB."
+        )
+        return False
+
+    sample_n = min(sample_count, len(tile_names))
+    sampled_names = random.sample(tile_names, sample_n)
+
+    linear_votes = 0
+    checked = 0
+    for tile_name in sampled_names:
+        tile_path = images_path / tile_name
+        if not tile_path.exists():
+            continue
+
+        try:
+            is_linear, stats = detect_input_is_linear_multiband(tile_path, return_stats=True)
+            checked += 1
+            linear_votes += int(is_linear)
+            logger.debug(
+                f"Scale check {tile_name}: {'linear' if is_linear else 'dB'} "
+                f"(p50={stats.get('p50', float('nan')):.3f}, "
+                f"p99={stats.get('p99', float('nan')):.3f}, "
+                f"frac_lt_zero={stats.get('frac_lt_zero', float('nan')):.3f}, "
+                f"ambiguous={stats.get('ambiguous', False)})"
+            )
+        except Exception as exc:
+            logger.warning(f"Scale check failed for {tile_path.name}: {exc}")
+
+    if checked == 0:
+        logger.warning(
+            f"Scale detection could not inspect any {dataset_label} tiles. Defaulting to dB."
+        )
+        return False
+
+    linear_ratio = linear_votes / checked
+    resolved_linear = linear_ratio > 0.5
+    logger.info(
+        f"Resolved {dataset_label} input scale from {checked} sampled tiles: "
+        f"{'linear' if resolved_linear else 'dB'} (linear_ratio={linear_ratio:.2f})"
+    )
+    return resolved_linear
+
 # CHECKS FOR INITIAL FOLDERS
 
 def check_single_input_filetype(folder,  title, fsuffix1, fsuffix2):
