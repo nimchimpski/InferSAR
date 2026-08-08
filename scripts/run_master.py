@@ -301,7 +301,9 @@ def main(train, test, inference, config, fine_tune):
     # db_min = None
     # db_max = None
     tile_size = 256
-    stride = 256
+    # Inference uses overlapping tiles so tile-edge context is preserved for stitching;
+    # train/test read pre-made non-overlapping tiles, so stride == tile_size there.
+    stride = max(1, int(tile_size * 0.75)) if inference else tile_size
     
     # Initialize variables
     stitched_img_path = None  # Will be set later based on mode
@@ -310,7 +312,7 @@ def main(train, test, inference, config, fine_tune):
     # sensor = 'S1'
     # date= '030126'
     # ***********************
-    threshold = 0.45 # THRESHOLD FOR METRICS + STITCHING.
+    threshold = 0.6 # THRESHOLD FOR METRICS + STITCHING.
     # **********************
     # ........................................................
     if inference:
@@ -354,9 +356,7 @@ def main(train, test, inference, config, fine_tune):
         WandB_online = False
         MAKE_TIFS = True
         MAKE_TILES = True
-        if stride >= tile_size:
-            stride = max(1, int(tile_size * 0.75))
-            logger.info(f"Inference overlap enabled: tile_size={tile_size}, stride={stride}, overlap={tile_size - stride}")
+        logger.info(f"Inference overlap enabled: tile_size={tile_size}, stride={stride}, overlap={tile_size - stride}")
         subset_fraction = 1
         batch_size = 1
         shuffle = False
@@ -834,6 +834,7 @@ def main(train, test, inference, config, fine_tune):
     
     if ckpt_path is not None:
         print(f'='*40 + f'\nCKPT NAME: {ckpt_path.name}\n' + '='*40)
+        print('////// IS THEIS THE CORRECT CHECKPOINT !!!!! ///////')
     else:
         print(f'='*40 + '\nCKPT NAME: None (training from scratch)\n' + '='*40)
 
@@ -850,7 +851,7 @@ def main(train, test, inference, config, fine_tune):
         try:
             model.load_state_dict(cleaned_state_dict)
             model.eval()
-            print(f"\nCHECKPOINT:  {ckpt_path.name}\n")
+            print(f"\nSTATE DICT LOADED\n")
         except Exception as e:
             logger.error(f"Failed to load model state dict: {e}")
             return

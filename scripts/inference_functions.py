@@ -173,7 +173,7 @@ def stitch_tiles_old(metadata: list, prediction_tiles_path, save_path, image):
     return stitched_image
 
 
-def stitch_tiles(metadata, prediction_tiles, save_path, image, tile_size, stride, threshold=0.5, blend="cosine"):
+def stitch_tiles(metadata, prediction_tiles, save_path, image, tile_size, stride, threshold=0.5, blend="center_crop"):
     """
     Reconstructs a full-resolution prediction image from overlapping tiles.
     
@@ -192,8 +192,10 @@ def stitch_tiles(metadata, prediction_tiles, save_path, image, tile_size, stride
         tile_size: int, edge length of each tile (pixels)
         stride: int, step size used when sliding window during tiling
         threshold: float (0-1), binarization threshold to convert probabilities to binary predictions
-        blend: "cosine" or "avg"; blending method for overlap regions (only used when overlap > 0)
-               - "cosine": Smooth cosine-weighted blend (reduces tile boundary artifacts)
+        blend: "center_crop", "cosine", or "avg"; blending method for overlap regions (only used when overlap > 0)
+               - "center_crop": Discard low-context tile borders and keep only each tile's
+                 high-context center (classic overlap-tile strategy, no averaging of weak edges)
+               - "cosine": Smooth cosine-weighted blend (averages overlapping low-context edges)
                - "avg": Simple averaging (uniform weights)
     
     Returns:
@@ -242,7 +244,48 @@ def stitch_tiles(metadata, prediction_tiles, save_path, image, tile_size, stride
         # Apply threshold to binarize probabilities
         merged = (stitched_image > threshold).astype(np.float32)
     
-    # Case 2: Tiles overlap (stride < tile_size)
+    # Case 2a: Tiles overlap and we discard low-context borders (no blending).
+    # Standard U-Net-style overlap-tile strategy: keep only the high-context center
+    # of each tile and let neighboring tiles cover the discarded border, instead of
+    # averaging together two lower-confidence edge predictions.
+    elif blend == "center_crop":
+        logger.info(f' OVERLAP: {overlap} (center-crop stitch, no blending)')
+        margin = overlap // 2
+
+        stitched_image = np.zeros((H, W), dtype=np.float32)
+
+        for t in metadata:
+            ys, ye = t["y_start"], t["y_end"]
+            xs, xe = t["x_start"], t["x_end"]
+            tile_path = prediction_tiles / t["tile_name"]
+
+            with rasterio.open(tile_path) as tsrc:
+                tile = tsrc.read(1).astype(np.float32)
+
+            target_h = max(0, ye - ys)
+            target_w = max(0, xe - xs)
+            if target_h == 0 or target_w == 0:
+                continue
+            h = min(tile.shape[0], target_h)
+            w = min(tile.shape[1], target_w)
+            tile = tile[:h, :w]
+
+            # Only trim a border where a neighboring tile actually covers that context;
+            # keep the true image edge when there is no neighbor on that side.
+            left = 0 if xs == 0 else margin
+            top = 0 if ys == 0 else margin
+            right = w if xe == W else max(left + 1, w - margin)
+            bottom = h if ye == H else max(top + 1, h - margin)
+
+            crop = tile[top:bottom, left:right]
+
+            dst_x0 = xs + left
+            dst_y0 = ys + top
+            stitched_image[dst_y0:dst_y0 + crop.shape[0], dst_x0:dst_x0 + crop.shape[1]] = crop
+
+        merged = (stitched_image > threshold).astype(np.float32)
+
+    # Case 2b: Tiles overlap and we blend with weighted averaging.
     # Need weighted blending to avoid sharp edges at tile boundaries
     else:
         logger.info(f' OVERLAP: {overlap}')
