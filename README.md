@@ -39,8 +39,7 @@ Optimal performance was achieved with   8 workers (parallel processes)  ; increa
 Training required ~30 minutes for 15 epochs on 10,000–20,000 samples, with no significant improvements observed up to 400 epochs.  This training time is a significant improvement on previous measures. Partly due to smaller datasets, but also improvements in the code, libraries, and data location.
 
 ## Key Notes for Future Developers:    
-Further split up functions, using a Functional Programming approach (no side effects, limited I/O writes, return value based
-Add Unit tests.
+Refactored functions to a Functional Programming approach (no side effects, limited I/O writes, return value based).
 Diagnosed a tile-stitching boundary bias causing mosaic/checkerboard artifacts in low-contrast, ambiguous water regions (rivers unaffected due to strong signal): confirmed pixel-exact that the artifact aligned with the stitching margin, root-caused to independent per-tile CNN inference losing context at tile edges, and mitigated by enlarging the inference tile size/overlap margin. This is well-documented in some ML frameworks (e.g. MONAI's sliding-window inference) but commonly missed in custom/from-scratch geospatial pipelines.
 Completing STAC protocol integration for metadata access and fine grained dataset control.
 

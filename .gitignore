@@ -18,7 +18,8 @@ predictions1/
 predictions_bkp/
 
 tiles/
-
+notes/
+notesx/
 ignore/
 *ignore*/
 
@@ -51,3 +52,5 @@ test_images_KEEP/
 
 /serverscripts
 deploy-item.sh
+
+Z/

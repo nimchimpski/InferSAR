@@ -1,7 +1,0 @@
-linear / db
-no data ValueError
-resolution
-transform
-crs
-pixel size ratio
-normalised , how?

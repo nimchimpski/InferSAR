@@ -13,16 +13,26 @@ from pathlib import Path
 import os
 
 # ========== CONFIGURATION ==========
-CENTER_LAT = 22.096
-CENTER_LON = 89.2241
-BOUNDS = [CENTER_LON - 0.25, CENTER_LAT - 0.25,  # bbox [W, S, E, N]
-          CENTER_LON + 0.25, CENTER_LAT + 0.25]
-DATE_START = "2025-01-01"
-DATE_END = "2025-12-31"
+
+# ////////////PAKISTAN  Larkana/Shikarpur/Jacobabad
+BOUNDS = [67.9, 27.3, 68.9, 28.4]   # [W, S, E, N] — covers Larkana/Shikarpur/Jacobabad (EMSR629 AOIs)
+DATE_START = "2022-08-26"
+DATE_END = "2022-08-31"             # brackets the EMS delineation delivery (2022-08-30)
 MAX_ITEMS = 5
-OUTPUT_DIR = Path("data/1raw/pc_bangladesh")
-KEEP_INTERMEDIATE_BANDS = True
+OUTPUT_DIR = Path("data/1raw/pc_pakistan_floods_2022_emsr629")  # separate from your existing Sept-15 download
+#  =============
+
+# ////////////BANGLADESH
+# CENTER_LAT = 22.096
+# CENTER_LON = 89.2241
+# BOUNDS = [CENTER_LON - 0.25, CENTER_LAT - 0.25,  # bbox [W, S, E, N]
+#           CENTER_LON + 0.25, CENTER_LAT + 0.25]
+# DATE_START = "2025-01-01"
+# DATE_END = "2025-12-31"
+# MAX_ITEMS = 5
+# OUTPUT_DIR = Path("data/1raw/pc_bangladesh")
 # ===================================
+KEEP_INTERMEDIATE_BANDS = True
 
 def setup_environment():
     """Ensure Planetary Computer is authenticated."""
@@ -101,7 +111,7 @@ def stack_vv_vh(vv_path, vh_path, output_path):
     print(f"Stacked VV+VH: {output_path}")
 
 def main():
-    fetch_new = False
+    fetch_new = True
     print("=" * 40)
     print("Bangladesh Sentinel-1 Inference Pipeline")
     if fetch_new:
