@@ -167,16 +167,16 @@ def main(train, test, inference, config, fine_tune):
     TRAINING_DATA_PRETILED = True
     subset_fraction = 1
     batch_size = 8 # 8 is tested as optimal for the macbook
-    max_epoch = 20
+    max_epoch = 25
     early_stop = True
-    patience = 3
+    patience = 5
     num_workers = 0 
     # Logging and model parameters
     WandB_online = True #////////
     LOGSTEPS = 50
     PRETRAINED = True
     in_channels = 2 # TODO ???
-    DEVRUN = 1
+    DEVRUN = 0
     # Loss function parameters
     loss_description = 'bce_dice' # 'smp_bce' #  ''focal'
 
@@ -201,7 +201,7 @@ def main(train, test, inference, config, fine_tune):
     # sensor = 'S1'
     # date= '030126'
     # ***********************
-    threshold = 0.6 # THRESHOLD FOR METRICS + STITCHING.//////////////
+    threshold = 0.86 # THRESHOLD FOR METRICS + STITCHING.//////////////
     # **********************
     # ........................................................
     if inference:
@@ -215,7 +215,7 @@ def main(train, test, inference, config, fine_tune):
 
     ckpt_path = None
     ckpt_source = "none"
-    ckpt_tag = "none"
+    ckpt_tag = ""
     if require_checkpoint:
         # Resolve checkpoint from ckpt_input only for deterministic runs.
         input_ckpts = sorted(paths.ckpt_input_path.rglob("*.ckpt"))
@@ -249,10 +249,14 @@ def main(train, test, inference, config, fine_tune):
         subset_fraction = 1
         batch_size = 1
         shuffle = False
+    if train:
+        ckpt_label = ""
+    else:
+        ckpt_label = f"_ckpt-{ckpt_tag}_"
 
     run_name = (
-        f"{job_type}_{dataset_name}_{timestamp}_ckpt-{ckpt_tag}_"
-        f"BS{batch_size}_s{subset_fraction}_{loss_description}"
+        f"{job_type}_{dataset_name}_{timestamp}_{ckpt_label}"
+        f"B{batch_size}_s{subset_fraction}_{loss_description}"
     )
 
     if inference:
@@ -278,7 +282,7 @@ def main(train, test, inference, config, fine_tune):
     
         working_path = paths.predictions_path
         stitched_img_path = inference_paths['stitched_image']
-        stitched_img_path = working_path /  f'{dataset_name}_{timestamp}_{tile_size}_{threshold}_{run_name}.tif'
+        stitched_img_path = working_path /  f'{timestamp}_{tile_size}_{threshold}_{ckpt_tag}.tif'
         if stitched_img_path.exists():
             logger.info(f"overwriting existing file! : {stitched_img_path.name}")
 

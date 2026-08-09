@@ -39,6 +39,10 @@ import logging
 from scripts.train.train_helpers import is_sweep_run
 from scripts.train.train_functions import plot_auc_pr, compute_confusion_counts, metrics_from_counts
 
+# Flip/rotation augmentation in Sen1Dataset._augment: confirmed neutral-to-slightly-negative
+# (2026-08-10 A/B test, resnet34+bce_dice+sen1floods11) — off by default, flip to re-test.
+AUGMENT_ENABLED = False
+
 
 logger = logging.getLogger(__name__)
 # logger.info("Logger from train_classes.py is working!")
@@ -595,11 +599,18 @@ class Sen1Dataset(Dataset):
             mask_np = np.where(raw == -1, 255, raw).astype(np.float32)
             mask = torch.from_numpy(mask_np)
 
-            # add channel dims
+            mask = mask.unsqueeze(0)
+            valid_mask = valid_mask.unsqueeze(0)
+
+            # Label-safe flips/rotations, train only, so val/test stay deterministic.
+            # Confirmed neutral-to-slightly-negative on this setup (2026-08-10 A/B test) — off by default.
+            if AUGMENT_ENABLED and self.job_type == "train":
+                img_tensor, mask, valid_mask = self._augment(img_tensor, mask, valid_mask)
+
             return (
                 img_tensor,
-                mask.unsqueeze(0),
-                valid_mask.unsqueeze(0),
+                mask,
+                valid_mask,
                 self.fnames[idx]
             )
 
@@ -610,6 +621,26 @@ class Sen1Dataset(Dataset):
             valid_mask.unsqueeze(0),
             self.fnames[idx]
         )
+
+    @staticmethod
+    def _augment(
+        img_tensor: torch.Tensor, mask: torch.Tensor, valid_mask: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Random horizontal/vertical flip + 90-degree rotation, applied identically to img/mask/valid."""
+        if random.random() < 0.5:
+            img_tensor = torch.flip(img_tensor, dims=[-1])
+            mask = torch.flip(mask, dims=[-1])
+            valid_mask = torch.flip(valid_mask, dims=[-1])
+        if random.random() < 0.5:
+            img_tensor = torch.flip(img_tensor, dims=[-2])
+            mask = torch.flip(mask, dims=[-2])
+            valid_mask = torch.flip(valid_mask, dims=[-2])
+        k = random.randint(0, 3)
+        if k:
+            img_tensor = torch.rot90(img_tensor, k, dims=[-2, -1])
+            mask = torch.rot90(mask, k, dims=[-2, -1])
+            valid_mask = torch.rot90(valid_mask, k, dims=[-2, -1])
+        return img_tensor.contiguous(), mask.contiguous(), valid_mask.contiguous()
 
 
 class Segmentation_training_loop(pl.LightningModule):

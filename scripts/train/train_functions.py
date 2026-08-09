@@ -218,7 +218,8 @@ def wandb_initialization(job_type, repo_path, project, dataset_name, run_name, t
     if  wandb_online:
         mode = 'online'
     else:
-        mode = 'offline'
+        # Offline mode still writes local run folders that pile up; disabled skips logging entirely.
+        mode = 'disabled'
         logger.info(f"--- WandB is: {mode} ---")
     # Update parameters based on job type
     if job_type == "reproduce":
